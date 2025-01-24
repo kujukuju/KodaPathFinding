@@ -29,8 +29,8 @@ SearchEntry :: struct {
 }
 
 find_path :: (sparse: *GroupedSparseGrid($T), source_point: Vector3, target_point: Vector3) -> NavPath {
-    source_cell := get_cell_index(sparse.grid, source_point);
-    target_cell := get_cell_index(sparse.grid, target_point);
+    source_cell := get_cell_index(*sparse.grid, source_point);
+    target_cell := get_cell_index(*sparse.grid, target_point);
 
     return find_path(sparse, source_cell, target_cell);
 }
@@ -42,7 +42,7 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         return  to_float64_seconds(time);
     }
 
-    start := seconds_since_init();
+    #if logging then start := seconds_since_init();
 
     ground_source_cell := source_cell;
     maximum_fall_cells :: 40;
@@ -71,7 +71,7 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         return .{};
     }
 
-    end_point := get_cell_position(sparse.grid, ground_target_cell);
+    end_point := get_cell_position(*sparse.grid, ground_target_cell);
 
     sorted_insert :: (array: *LinkedArray(SearchEntry), entry: SearchEntry) {
         linked_insert_sorted(array, entry, (a: SearchEntry, b: SearchEntry) -> float {
@@ -79,9 +79,12 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         });
     }
 
-    empty_cell :: SparseIndex.{S32_MAX, S32_MAX, S32_MAX};
+    SparseVisited :: struct {
+        visited: bool;
+        parent_index: SparseIndex;
+    }
 
-    visited: SparseGrid(SparseIndex) = create_sparse_grid(SparseIndex, sparse.grid.grid_size_x, sparse.grid.grid_size_y, sparse.grid.grid_size_z, sparse.grid.cell_size);
+    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid.grid_size_x, sparse.grid.grid_size_y, sparse.grid.grid_size_z, sparse.grid.cell_size);
     visited.allocator = temp;
 
     search_queue: LinkedArray(SearchEntry);
@@ -104,7 +107,7 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
     //     array_insert_at(array, entry, insert_index);
     // }
 
-    ground_source_position := get_cell_position(sparse.grid, ground_source_cell);
+    ground_source_position := get_cell_position(*sparse.grid, ground_source_cell);
     sorted_insert(*search_queue, SearchEntry.{
         ground_source_cell,
         ground_source_position,
@@ -113,9 +116,14 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         .[0, 0, 0],
     });
 
-    set_cell(*visited, ground_source_cell, ground_source_cell);
+    set_cell(*visited, ground_source_cell, SparseVisited.{
+        true,
+        ground_source_cell,
+    });
 
     // table_set(visited, ground_source_cell, ground_source_cell);
+
+    cached_grid: CachedGrid(SparseVisited);
 
     check_count := 0;
 
@@ -126,8 +134,11 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
     defer print("get_cell_position_time % ms\n", get_cell_position_time * 1000);
     defer print("startup_time % ms\n", startup_time * 1000);
 
-    startup_time += seconds_since_init() - start;
-    start = 0;
+    defer print("get_or_add_cell_pointer cache hit %\n", cache_hit);
+    defer print("get_or_add_cell_pointer cache miss %\n", cache_miss);
+
+    #if logging then startup_time += seconds_since_init() - start;
+    #if logging then start = 0;
 
     while search_queue.count > 0 {
         defer check_count += 1;
@@ -140,28 +151,28 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
 
         // print_items(search_queue);
 
-        start = seconds_since_init();
+        #if logging then start = seconds_since_init();
         search_entry := linked_pop(*search_queue);
-        linked_pop_time += seconds_since_init() - start;
-        start = 0;
+        #if logging then linked_pop_time += seconds_since_init() - start;
+        #if logging then start = 0;
 
         if search_entry.cell == ground_target_cell {
-            start = seconds_since_init();
-            defer print("Path lookup time % ms\n", (seconds_since_init() - start) * 1000);
+            #if logging then start = seconds_since_init();
+            #if logging then defer print("Path lookup time % ms\n", (seconds_since_init() - start) * 1000);
 
             path: NavPath;
             array_add(*path.path, search_entry.cell);
 
             parent_cell := get_cell(*visited, search_entry.cell);
-            has_parent_cell := parent_cell != empty_cell;
-            has_parent_cell = has_parent_cell && search_entry.cell != parent_cell;
+            has_parent_cell := parent_cell.visited;
+            has_parent_cell = has_parent_cell && search_entry.cell != parent_cell.parent_index;
 
             while has_parent_cell {
-                array_add(*path.path, parent_cell);
+                array_add(*path.path, parent_cell.parent_index);
 
-                next_parent_cell := get_cell(*visited, parent_cell);
-                has_parent_cell = next_parent_cell != empty_cell;
-                has_parent_cell = has_parent_cell && next_parent_cell != parent_cell;
+                next_parent_cell := get_cell(*visited, parent_cell.parent_index);
+                has_parent_cell = next_parent_cell.visited;
+                has_parent_cell = has_parent_cell && next_parent_cell.parent_index != parent_cell.parent_index;
                 parent_cell = next_parent_cell;
             }
 
@@ -195,39 +206,42 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
             // }
 
             cell_index := SparseIndex.{search_entry.cell.x + offset_x, search_entry.cell.y + offset_y, search_entry.cell.z + offset_z};
-            start = seconds_since_init();
-            parent_cell := get_or_add_cell_pointer(*visited, cell_index);
-            new_cell := parent_cell.* == empty_cell;
-            find_or_add_time += seconds_since_init() - start;
-            start = 0;
+            #if logging then start = seconds_since_init();
+            parent_cell := get_or_add_cell_pointer(*visited, cell_index, *cached_grid);
+            new_cell := !parent_cell.visited;
+            #if logging then find_or_add_time += seconds_since_init() - start;
+            #if logging then start = 0;
             if new_cell {
                 // set the parent lookup if you are adding a new entry
-                parent_cell.* = search_entry.cell;
+                parent_cell.* = SparseVisited.{
+                    true,
+                    search_entry.cell,
+                };
 
-                start = seconds_since_init();
+                #if logging then start = seconds_since_init();
                 if get_cell(sparse, cell_index) == .Ground {
-                    if start {
+                    #if logging then if start {
                         get_cell_time += seconds_since_init() - start;
                         start = 0;
                     }
-                    start = seconds_since_init();
+                    #if logging then start = seconds_since_init();
                     parent_cell_distance := length(Vector3.{cast(float) offset_x, cast(float) offset_y, cast(float) offset_z} * sparse.grid.cell_size);
-                    cell_position := get_cell_position(sparse.grid, cell_index);
-                    get_cell_position_time += seconds_since_init() - start;
-                    start = 0;
+                    cell_position := get_cell_position(*sparse.grid, cell_index);
+                    #if logging then get_cell_position_time += seconds_since_init() - start;
+                    #if logging then start = 0;
 
-                    start = seconds_since_init();
+                    #if logging then start = seconds_since_init();
                     sorted_insert(*search_queue, SearchEntry.{
                         cell_index,
-                        get_cell_position(sparse.grid, cell_index),
+                        get_cell_position(*sparse.grid, cell_index),
                         search_entry.cell_distance + parent_cell_distance,
                         search_entry.cell_distance + parent_cell_distance + distance(cell_position, end_point),
                         offset,
                     });
-                    sorted_insert_time += seconds_since_init() - start;
-                    start = 0;
+                    #if logging then sorted_insert_time += seconds_since_init() - start;
+                    #if logging then start = 0;
                 }
-                if start {
+                #if logging then if start {
                     get_cell_time += seconds_since_init() - start;
                     start = 0;
                 }
@@ -238,6 +252,7 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
     return .{};
 }
 
+logging :: false;
 get_cell_time: float64;
 sorted_insert_time: float64;
 linked_pop_time: float64;

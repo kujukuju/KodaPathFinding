@@ -51,11 +51,11 @@ for_expansion :: (sparse: GroupedSparseGrid($T), body: Code, flags: For_Flags) #
 }
 
 construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, info: SparseConstructionInfo(T, $D)) {
-    start_index := get_cell_index(sparse.grid, aabb.lower);
-    end_index := get_cell_index(sparse.grid, aabb.upper);
+    start_index := get_cell_index(*sparse.grid, aabb.lower);
+    end_index := get_cell_index(*sparse.grid, aabb.upper);
 
-    start_grid_index := get_grid_index(sparse.grid, start_index);
-    end_grid_index := get_grid_index(sparse.grid, end_index);
+    start_grid_index := get_grid_index(*sparse.grid, start_index);
+    end_grid_index := get_grid_index(*sparse.grid, end_index);
 
     ground_add_x := cast(s32) sign(info.gravity_direction.x);
     ground_add_y := cast(s32) sign(info.gravity_direction.y);
@@ -86,8 +86,8 @@ construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, i
                     cell_start_x := max(grid_x * sparse.grid.grid_size_x, start_index.x);
                     cell_end_x := min(cell_start_x + sparse.grid.grid_size_x - 1, end_index.x);
 
-                    start_aabb := get_cell_aabb(sparse.grid, cell_start_x, cell_start_y, cell_start_z);
-                    end_aabb := get_cell_aabb(sparse.grid, cell_end_x, cell_end_y, cell_end_z);
+                    start_aabb := get_cell_aabb(*sparse.grid, cell_start_x, cell_start_y, cell_start_z);
+                    end_aabb := get_cell_aabb(*sparse.grid, cell_end_x, cell_end_y, cell_end_z);
                     grid_aabb := merge(start_aabb, end_aabb);
 
                     // try to early out the entire call if possible
@@ -119,7 +119,7 @@ construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, i
                             for cell_x: cell_start_x..cell_end_x {
                                 offset_x := cell_x - start_index.x;
 
-                                cell_aabb := get_cell_aabb(sparse.grid, cell_x, cell_y, cell_z);
+                                cell_aabb := get_cell_aabb(*sparse.grid, cell_x, cell_y, cell_z);
                                 cell_empty := info.get_cell_empty(cell_aabb, info.data);
 
                                 cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
@@ -140,7 +140,7 @@ construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, i
                 for cell_x: start_index.x..end_index.x {
                     offset_x := cell_x - start_index.x;
 
-                    cell_aabb := get_cell_aabb(sparse.grid, cell_x, cell_y, cell_z);
+                    cell_aabb := get_cell_aabb(*sparse.grid, cell_x, cell_y, cell_z);
                     cell_empty := info.get_cell_empty(cell_aabb, info.data);
 
                     cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
@@ -223,7 +223,7 @@ get_nearest_cell :: (sparse: *GroupedSparseGrid($T), line: Line3, valid: T) -> S
         return .{}, false;
     }
 
-    cell_boundaries := get_cell_boundaries(sparse.grid);
+    cell_boundaries := get_cell_boundaries(*sparse.grid);
 
     nearest_cell.x = clamp(nearest_cell.x, cell_boundaries[0].x, cell_boundaries[1].x);
     nearest_cell.y = clamp(nearest_cell.y, cell_boundaries[0].y, cell_boundaries[1].y);
