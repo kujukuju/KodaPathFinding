@@ -34,16 +34,32 @@ sparse_equals :: inline (a: SparseIndex, b: SparseIndex) -> bool {
     return a == b;
 }
 
+// #run {
+//     a1 := SparseIndex.{-2, 2, 3};
+//     print("%: %\n", a1, unpack(pack(a1)));
+// };
+
 pack :: (index: SparseIndex) -> u64 {
-    index_x := cast,no_check(u32) index.x;
-    index_y := cast,no_check(u32) index.y;
-    index_z := cast,no_check(u32) index.z;
+    index_x := cast(u64) (cast,no_check(u16) (cast(s16) index.x));
+    index_y := cast(u64) (cast,no_check(u16) (cast(s16) index.y));
+    index_z := cast(u64) (cast,no_check(u16) (cast(s16) index.z));
 
     result: u64;
-    result |= (cast(u64) (index_x & 0b10000000_00000000_00000000_00000000)) << 31;
-    result |= (cast(u64) (index_y & 0b10000000_00000000_00000000_00000000)) << 31;
+    result |= index_x << 32;
+    result |= index_y << 16;
+    result |= index_z;
+
+    return result;
 }
 
 unpack :: (index: u64) -> SparseIndex {
+    index_x := (index >> 32) & 0xffff;
+    index_y := (index >> 16) & 0xffff;
+    index_z := index & 0xffff;
 
+    result: SparseIndex;
+    result.x = cast,no_check(s16) index_x;
+    result.y = cast,no_check(s16) index_y;
+    result.z = cast,no_check(s16) index_z;
+    return result;
 }

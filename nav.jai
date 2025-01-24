@@ -1,7 +1,14 @@
 
+// features
 // jumping
 // have connectivity groupings to know if its even possible to go from one place to another
 // visualize every cell its visiting... maybe with color gradient
+
+// optimizations
+// instead of a hash table for visited we're gonna reuse the sparse grid
+// and then when we're doing our actual navigation iteration we're gonna somehow, really intelligently, hold on
+// to the current grid until it's invalid before sampling to get a new grid
+// and we'll also do that for the visited lookup
 
 NavPath :: struct {
     path: [..] SparseIndex;
@@ -22,6 +29,7 @@ SearchEntry :: struct {
 }
 
 VisitedTable :: Table(SparseIndex, SparseIndex, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
+
 
 find_path :: (sparse: *GroupedSparseGrid($T), source_point: Vector3, target_point: Vector3, allocated_queue: *[..] SearchEntry = null, allocated_visited: *VisitedTable = null) -> NavPath {
     source_cell := get_cell_index(sparse.grid, source_point);
