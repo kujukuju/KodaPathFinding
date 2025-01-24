@@ -1,8 +1,8 @@
 
 SparseIndex :: struct {
-    x: s32;
-    y: s32;
-    z: s32;
+    x: s32 = S32_MAX;
+    y: s32 = S32_MAX;
+    z: s32 = S32_MAX;
 }
 
 operator == :: (a: SparseIndex, b: SparseIndex) -> bool {

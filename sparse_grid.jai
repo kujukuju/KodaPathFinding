@@ -5,7 +5,7 @@ SparseGrid :: struct (T: Type) {
     grid_size_y: int;
     grid_size_z: int;
     cell_size: float;
-    recycled: [..] [] T;
+    allocator: Allocator;
 }
 
 // this is a hashmap of grids
@@ -50,18 +50,18 @@ for_expansion :: (sparse: SparseGrid($T), body: Code, flags: For_Flags) #expand 
     }
 }
 
-get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
+get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool #no_abc {
     cell_x, cell_y, cell_z := get_cell_indices(sparse, point);
     data, found := get_cell(sparse, cell_x, cell_y, cell_z);
     return data, found;
 }
 
-get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
+get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool #no_abc {
     cell, valid := get_cell(sparse, cell_index.x, cell_index.y, cell_index.z);
     return cell, valid;
 }
 
-get_cell :: (sparse: *SparseGrid($T), cell_x: int, cell_y: int, cell_z: int) -> T, bool {
+get_cell :: (sparse: *SparseGrid($T), cell_x: int, cell_y: int, cell_z: int) -> T, bool #no_abc {
     grid_index, cell_index := get_grid_and_cell_indices(sparse, cell_x, cell_y, cell_z);
     grid, grid_found := table_find(*sparse.grids, grid_index);
     if grid_found {
@@ -71,12 +71,31 @@ get_cell :: (sparse: *SparseGrid($T), cell_x: int, cell_y: int, cell_z: int) -> 
     return empty, false;
 }
 
-set_cell :: (sparse: *SparseGrid($T), point: Vector3, data: T) {
+get_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T, bool #no_abc {
+    grid_index, cell_index := get_grid_and_cell_indices(sparse, cell_index.x, cell_index.y, cell_index.z);
+    grid, grid_found := table_find(*sparse.grids, grid_index);
+    if grid_found {
+        return *grid[cell_index], true;
+    }
+    return null, false;
+}
+
+get_or_add_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T #no_abc {
+    grid_index, cell_index := get_grid_and_cell_indices(sparse, cell_index.x, cell_index.y, cell_index.z);
+    grid := get_or_add_grid(sparse, grid_index);
+    return *grid[cell_index];
+}
+
+set_cell :: (sparse: *SparseGrid($T), point: Vector3, data: T) #no_abc {
     cell_x, cell_y, cell_z := get_cell_indices(sparse, point);
     set_cell(sparse, cell_x, cell_y, cell_z, data);
 }
 
-set_cell :: (sparse: *SparseGrid($T), cell_x: int, cell_y: int, cell_z: int, data: T) {
+set_cell :: (sparse: *SparseGrid($T), index: SparseIndex, data: T) #no_abc {
+    set_cell(sparse, index.x, index.y, index.z, data);
+}
+
+set_cell :: (sparse: *SparseGrid($T), cell_x: int, cell_y: int, cell_z: int, data: T) #no_abc {
     grid_index, cell_index := get_grid_and_cell_indices(sparse, cell_x, cell_y, cell_z);
     grid := get_or_add_grid(sparse, grid_index);
     grid[cell_index] = data;
@@ -258,9 +277,6 @@ sparse_grid_reset :: (sparse: *SparseGrid($T)) {
         } else {
             memset(grid.data, 0, grid.count * size_of(T));
         }
-
-        array_add(*sparse.recycled, grid);
-        table_reset(*sparse.grids);
     }
 }
 
@@ -351,16 +367,16 @@ get_grid_position :: (sparse: SparseGrid($T), grid_x: int, grid_y: int, grid_z: 
     return .{grid_x * sparse.grid_size_x, grid_y * sparse.grid_size_y, grid_z * sparse.grid_size_z};
 }
 
-get_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T, bool {
+get_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T, bool #no_abc {
     grid, found := table_find(*sparse.grids, index);
     return grid, found;
 }
 
-get_or_add_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T {
-    grid, added := find_or_add(*sparse.grids, index);
+get_or_add_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T #no_abc {
+    grid, added := find_or_add(*sparse.grids, index,, sparse.allocator);
     if added {
         grid_count := sparse.grid_size_x * sparse.grid_size_y * sparse.grid_size_z;
-        grid.* = NewArray(grid_count, T);
+        grid.* = NewArray(grid_count, T,, sparse.allocator);
     }
     return grid.*;
 }

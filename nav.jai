@@ -28,17 +28,14 @@ SearchEntry :: struct {
     from_direction: [3] s8;
 }
 
-VisitedTable :: Table(SparseIndex, SparseIndex, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
-
-
-find_path :: (sparse: *GroupedSparseGrid($T), source_point: Vector3, target_point: Vector3, allocated_queue: *[..] SearchEntry = null, allocated_visited: *VisitedTable = null) -> NavPath {
+find_path :: (sparse: *GroupedSparseGrid($T), source_point: Vector3, target_point: Vector3) -> NavPath {
     source_cell := get_cell_index(sparse.grid, source_point);
     target_cell := get_cell_index(sparse.grid, target_point);
 
-    return find_path(sparse, source_cell, target_cell, allocated_queue, allocated_visited);
+    return find_path(sparse, source_cell, target_cell);
 }
 
-find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_cell: SparseIndex, allocated_queue: *[..] SearchEntry = null, allocated_visited: *VisitedTable = null) -> NavPath {
+find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_cell: SparseIndex) -> NavPath {
     seconds_since_init :: () -> float64 {
         // this is like twice as fast as current_time_monotonic
         time := current_time_consensus();
@@ -82,47 +79,29 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         });
     }
 
+    empty_cell :: SparseIndex.{S32_MAX, S32_MAX, S32_MAX};
 
-    empty_visited: VisitedTable;
-    empty_visited.allocator = temp;
-    visited: *VisitedTable;
-    if allocated_visited {
-        visited = allocated_visited;
-    } else {
-        visited = *empty_visited;
-    }
-
-    // table of cell position -> cell parent
-    // visited: VisitedTable;
-    // visited.allocator = temp;
+    visited: SparseGrid(SparseIndex) = create_sparse_grid(SparseIndex, sparse.grid.grid_size_x, sparse.grid.grid_size_y, sparse.grid.grid_size_z, sparse.grid.cell_size);
+    visited.allocator = temp;
 
     search_queue: LinkedArray(SearchEntry);
     linked_reserve(*search_queue, 1024);
 
-    linked_pop :: (arr: *[..] SearchEntry) -> SearchEntry {
-        item := arr.*[arr.count - 1];
-        arr.count -= 1;
-        return item;
-    }
+    // linked_pop :: (arr: *[..] SearchEntry) -> SearchEntry {
+    //     item := arr.*[arr.count - 1];
+    //     arr.count -= 1;
+    //     return item;
+    // }
 
-    sorted_insert :: (array: *[..] SearchEntry, entry: SearchEntry) {
-        insert_index := array.count;
-        for < curr, index: array.* {
-            if curr.heuristic_distance - entry.heuristic_distance >= 0 {
-                break;
-            }
-            insert_index = index;
-        }
-        array_insert_at(array, entry, insert_index);
-    }
-
-    // search_queue: [..] SearchEntry;
-    // search_queue.allocator = temp;
-    // search_queue: *[..] SearchEntry;
-    // if allocated_queue {
-    //     search_queue = allocated_queue;
-    // } else {
-    //     search_queue = *empty_queue;
+    // sorted_insert :: (array: *[..] SearchEntry, entry: SearchEntry) {
+    //     insert_index := array.count;
+    //     for < curr, index: array.* {
+    //         if curr.heuristic_distance - entry.heuristic_distance >= 0 {
+    //             break;
+    //         }
+    //         insert_index = index;
+    //     }
+    //     array_insert_at(array, entry, insert_index);
     // }
 
     ground_source_position := get_cell_position(sparse.grid, ground_source_cell);
@@ -134,7 +113,9 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
         .[0, 0, 0],
     });
 
-    table_set(visited, ground_source_cell, ground_source_cell);
+    set_cell(*visited, ground_source_cell, ground_source_cell);
+
+    // table_set(visited, ground_source_cell, ground_source_cell);
 
     check_count := 0;
 
@@ -171,13 +152,15 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
             path: NavPath;
             array_add(*path.path, search_entry.cell);
 
-            parent_cell, has_parent_cell := table_find(visited, search_entry.cell);
+            parent_cell := get_cell(*visited, search_entry.cell);
+            has_parent_cell := parent_cell != empty_cell;
             has_parent_cell = has_parent_cell && search_entry.cell != parent_cell;
 
             while has_parent_cell {
                 array_add(*path.path, parent_cell);
 
-                next_parent_cell:, has_parent_cell = table_find(visited, parent_cell);
+                next_parent_cell := get_cell(*visited, parent_cell);
+                has_parent_cell = next_parent_cell != empty_cell;
                 has_parent_cell = has_parent_cell && next_parent_cell != parent_cell;
                 parent_cell = next_parent_cell;
             }
@@ -213,7 +196,8 @@ find_path :: (sparse: *GroupedSparseGrid($T), source_cell: SparseIndex, target_c
 
             cell_index := SparseIndex.{search_entry.cell.x + offset_x, search_entry.cell.y + offset_y, search_entry.cell.z + offset_z};
             start = seconds_since_init();
-            parent_cell, new_cell := find_or_add(visited, cell_index);
+            parent_cell := get_or_add_cell_pointer(*visited, cell_index);
+            new_cell := parent_cell.* == empty_cell;
             find_or_add_time += seconds_since_init() - start;
             start = 0;
             if new_cell {
