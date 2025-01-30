@@ -9,6 +9,88 @@ operator == :: (a: SparseIndex, b: SparseIndex) -> bool {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
+operator + :: (a: SparseIndex, b: SparseDir) -> SparseIndex #symmetric {
+    r: SparseIndex = ---;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    r.z = a.z + b.z;
+    return r;
+}
+
+operator + :: (a: SparseIndex, b: SparseIndex) -> SparseIndex #symmetric {
+    r: SparseIndex = ---;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    r.z = a.z + b.z;
+    return r;
+}
+
+operator - :: (a: SparseIndex, b: SparseIndex) -> SparseIndex {
+    r: SparseIndex = ---;
+    r.x = a.x - b.x;
+    r.y = a.y - b.y;
+    r.z = a.z - b.z;
+    return r;
+}
+
+operator * :: (a: SparseIndex, b: s32) -> SparseIndex #symmetric {
+    r: SparseIndex = ---;
+    r.x = a.x * b;
+    r.y = a.y * b;
+    r.z = a.z * b;
+    return r;
+}
+
+SparseDir :: struct {
+    x: s8;
+    y: s8;
+    z: s8;
+}
+
+operator == :: (a: SparseDir, b: SparseDir) -> bool {
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+operator + :: (a: SparseDir, b: SparseDir) -> SparseDir #symmetric {
+    r: SparseDir = ---;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    r.z = a.z + b.z;
+    return r;
+}
+
+operator + :: (a: SparseDir, b: SparseDir) -> SparseDir #symmetric {
+    r: SparseDir = ---;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    r.z = a.z + b.z;
+    return r;
+}
+
+operator - :: (a: SparseDir, b: SparseDir) -> SparseDir {
+    r: SparseDir = ---;
+    r.x = a.x - b.x;
+    r.y = a.y - b.y;
+    r.z = a.z - b.z;
+    return r;
+}
+
+operator * :: (a: SparseDir, b: s8) -> SparseDir #symmetric {
+    r: SparseDir = ---;
+    r.x = a.x * b;
+    r.y = a.y * b;
+    r.z = a.z * b;
+    return r;
+}
+
+operator * :: (a: SparseDir, b: s32) -> SparseIndex #symmetric {
+    r: SparseIndex = ---;
+    r.x = a.x * b;
+    r.y = a.y * b;
+    r.z = a.z * b;
+    return r;
+}
+
 sparse_hash :: inline (a: SparseIndex) -> u32 {
     // find_or_add_time 29.105425 ms
     // str: string = ---;

@@ -1,12 +1,12 @@
 
 GroupedSparseGrid :: struct (T: Type) {
-    grid: SparseGrid(SparseEntry(T));
-    groups: Table(u16, [..] SparseIndex);
+    using grid: SparseGrid(SparseEntry(T));
+    // groups: Table(u16, [..] SparseIndex);
 }
 
 SparseEntry :: struct (T: Type) {
     data: T;
-    group: u16;
+    // group: u16;
 }
 
 SparseConstructionInfo :: struct (T: Type, D: Type) {
@@ -75,16 +75,16 @@ construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, i
     ATTEMPT_OPTIMIZATION :: true;
     #if ATTEMPT_OPTIMIZATION {
         for grid_z: start_grid_index.z..end_grid_index.z {
-            cell_start_z := max(grid_z * sparse.grid.grid_size_z, start_index.z);
-            cell_end_z := min(cell_start_z + sparse.grid.grid_size_z - 1, end_index.z);
+            cell_start_z := max(grid_z * sparse.grid_size_z, start_index.z);
+            cell_end_z := min(cell_start_z + sparse.grid_size_z - 1, end_index.z);
 
             for grid_y: start_grid_index.y..end_grid_index.y {
-                cell_start_y := max(grid_y * sparse.grid.grid_size_y, start_index.y);
-                cell_end_y := min(cell_start_y + sparse.grid.grid_size_y - 1, end_index.y);
+                cell_start_y := max(grid_y * sparse.grid_size_y, start_index.y);
+                cell_end_y := min(cell_start_y + sparse.grid_size_y - 1, end_index.y);
 
                 for grid_x: start_grid_index.x..end_grid_index.x {
-                    cell_start_x := max(grid_x * sparse.grid.grid_size_x, start_index.x);
-                    cell_end_x := min(cell_start_x + sparse.grid.grid_size_x - 1, end_index.x);
+                    cell_start_x := max(grid_x * sparse.grid_size_x, start_index.x);
+                    cell_end_x := min(cell_start_x + sparse.grid_size_x - 1, end_index.x);
 
                     start_aabb := get_cell_aabb(*sparse.grid, cell_start_x, cell_start_y, cell_start_z);
                     end_aabb := get_cell_aabb(*sparse.grid, cell_end_x, cell_end_y, cell_end_z);
@@ -183,10 +183,73 @@ construct_grouped_sparse_grid :: (sparse: *GroupedSparseGrid($T), aabb: AABB3, i
             }
         }
     }
+
+    edges :: [3] [3] s8.[
+        .[
+            .[-1, -1, 0],
+            .[-1, 0, 0],
+            .[-1, 1, 0],
+        ], .[
+            .[1, -1, 0],
+            .[1, 0, 0],
+            .[1, 1, 0],
+        ], .[
+            .[0, -1, -1],
+            .[0, 0, -1],
+            .[0, 1, -1],
+        ], .[
+            .[0, -1, 1],
+            .[0, 0, 1],
+            .[0, 1, 1],
+        ],
+    ];
+
+    // don't do this for performance test
+    for offset_z: cast(s32) 0..count_z - 1 {
+        for offset_y: cast(s32) 0..count_y - 1 {
+            for offset_x: cast(s32) 0..count_x - 1 {
+                cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
+                if cells_empty[cell_index] {
+                    continue;
+                }
+
+                for edge_group: edges {
+                    for edge: edge_group {
+                        edge_offset_x := offset_x + edge[0];
+                        edge_offset_y := offset_y + edge[1];
+                        edge_offset_z := offset_z + edge[2];
+
+                        is_empty_edge := edge_offset_x < 0 || edge_offset_x >= count_x;
+                        is_empty_edge = is_empty_edge || edge_offset_y < 0 || edge_offset_y >= count_y;
+                        is_empty_edge = is_empty_edge || edge_offset_z < 0 || edge_offset_z >= count_z;
+
+                        edge_index := edge_offset_z * count_x * count_y + edge_offset_y * count_x + edge_offset_x;
+                        is_empty_edge = is_empty_edge || cells_empty[edge_index];
+
+                        if !is_empty_edge {
+                            continue edge_group;
+                        }
+                    }
+
+                    // if we've finished looking at all the edges in a given edge group
+                    // and we haven't found a non-empty cell, then we remove this cell
+
+                    set_cell(sparse, SparseIndex.{start_index.x + offset_x, start_index.y + offset_y, start_index.z + offset_z}, info.empty_type);
+                }
+            }
+        }
+    }
 }
 
 get_cell :: (sparse: *GroupedSparseGrid($T), point: Vector3) -> T, bool {
     entry, found := get_cell(*sparse.grid, point);
+    return entry.data, found;
+}
+
+// *CachedGrid(SparseEntry(T)) doesn't work... try again in a future version
+// get_cell :: (sparse: *GroupedSparseGrid($T), cell_index: SparseIndex, cached_grid: *CachedGrid(SparseEntry(T))) -> T, bool {
+get_cell :: (sparse: *GroupedSparseGrid($T), cell_index: SparseIndex, cached_grid: *$D) -> T, bool {
+    entry, found := get_cell(*sparse.grid, cell_index, cached_grid);
     return entry.data, found;
 }
 
