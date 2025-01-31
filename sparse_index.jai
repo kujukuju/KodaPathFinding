@@ -33,6 +33,14 @@ operator - :: (a: SparseIndex, b: SparseIndex) -> SparseIndex {
     return r;
 }
 
+operator - :: (a: SparseIndex, b: SparseDir) -> SparseIndex {
+    r: SparseIndex = ---;
+    r.x = a.x - b.x;
+    r.y = a.y - b.y;
+    r.z = a.z - b.z;
+    return r;
+}
+
 operator * :: (a: SparseIndex, b: s32) -> SparseIndex #symmetric {
     r: SparseIndex = ---;
     r.x = a.x * b;
@@ -40,6 +48,22 @@ operator * :: (a: SparseIndex, b: s32) -> SparseIndex #symmetric {
     r.z = a.z * b;
     return r;
 }
+
+operator * :: (a: SparseIndex, b: SparseDir) -> SparseIndex #symmetric {
+    r: SparseIndex = ---;
+    r.x = a.x * b.x;
+    r.y = a.y * b.y;
+    r.z = a.z * b.z;
+    return r;
+}
+
+// operator * :: (a: SparseIndex, b: SparseDir) -> SparseIndex #symmetric {
+//     r: SparseIndex = ---;
+//     r.x = a.x * b.x;
+//     r.y = a.y * b.y;
+//     r.z = a.z * b.z;
+//     return r;
+// }
 
 SparseDir :: struct {
     x: s8;
@@ -59,13 +83,13 @@ operator + :: (a: SparseDir, b: SparseDir) -> SparseDir #symmetric {
     return r;
 }
 
-operator + :: (a: SparseDir, b: SparseDir) -> SparseDir #symmetric {
-    r: SparseDir = ---;
-    r.x = a.x + b.x;
-    r.y = a.y + b.y;
-    r.z = a.z + b.z;
-    return r;
-}
+// operator + :: (a: SparseDir, b: SparseDir) -> SparseDir #symmetric {
+//     r: SparseDir = ---;
+//     r.x = a.x + b.x;
+//     r.y = a.y + b.y;
+//     r.z = a.z + b.z;
+//     return r;
+// }
 
 operator - :: (a: SparseDir, b: SparseDir) -> SparseDir {
     r: SparseDir = ---;
