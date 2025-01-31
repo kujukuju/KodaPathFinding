@@ -1,6 +1,7 @@
 
 SparseGrid :: struct (T: Type) {
     grids: Table(SparseIndex, [] T, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
+    cached_grid: CachedGrid(T);
     grid_size_x: s32;
     grid_size_y: s32;
     grid_size_z: s32;
@@ -61,23 +62,6 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
     return data, found;
 }
 
-get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex, cached_grid: *CachedGrid(T)) -> T, bool {
-    grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
-    if cached_grid.grid_index != grid_index {
-        grid, grid_found := table_find(*sparse.grids, grid_index);
-        if grid_found {
-            cached_grid.grid_index = grid_index;
-            cached_grid.grid = grid;
-            return grid[grid_cell_index], true;
-        } else {
-            empty: T;
-            return empty, false;
-        }
-    } else {
-        return cached_grid.grid[grid_cell_index], true;
-    }
-}
-
 get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
     grid, grid_found := table_find(*sparse.grids, grid_index);
@@ -87,6 +71,23 @@ get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
     empty: T;
     return empty, false;
 }
+
+// get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
+//     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
+//     if sparse.cached_grid.grid_index != grid_index {
+//         grid, grid_found := table_find(*sparse.grids, grid_index);
+//         if grid_found {
+//             sparse.cached_grid.grid_index = grid_index;
+//             sparse.cached_grid.grid = grid;
+//             return grid[grid_cell_index], true;
+//         } else {
+//             empty: T;
+//             return empty, false;
+//         }
+//     } else {
+//         return sparse.cached_grid.grid[grid_cell_index], true;
+//     }
+// }
 
 get_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T, bool {
     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
@@ -100,23 +101,23 @@ get_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T, bo
 cache_hit := 0;
 cache_miss := 0;
 
-get_or_add_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex, cached_grid: *CachedGrid(T)) -> *T {
-    grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
-    #if logging then cache_hit += ifx grid_index == cached_grid.grid_index then 1 else 0;
-    #if logging then cache_miss += ifx grid_index == cached_grid.grid_index then 0 else 1;
-    if cached_grid.grid_index != grid_index {
-        cached_grid.grid_index = grid_index;
-        cached_grid.grid = get_or_add_grid(sparse, grid_index);
-    }
-
-    return *cached_grid.grid[grid_cell_index];
-}
-
 get_or_add_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T {
     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
     grid := get_or_add_grid(sparse, grid_index);
     return *grid[grid_cell_index];
 }
+
+// get_or_add_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T {
+//     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
+//     #if logging then cache_hit += ifx grid_index == sparse.cached_grid.grid_index then 1 else 0;
+//     #if logging then cache_miss += ifx grid_index == sparse.cached_grid.grid_index then 0 else 1;
+//     if sparse.cached_grid.grid_index != grid_index {
+//         sparse.cached_grid.grid_index = grid_index;
+//         sparse.cached_grid.grid = get_or_add_grid(sparse, grid_index);
+//     }
+
+//     return *sparse.cached_grid.grid[grid_cell_index];
+// }
 
 set_cell :: (sparse: *SparseGrid($T), point: Vector3, data: T) {
     cell_index := get_cell_index(sparse, point);
@@ -129,15 +130,15 @@ set_cell :: (sparse: *SparseGrid($T), index: SparseIndex, data: T) {
     grid[grid_cell_index] = data;
 }
 
-set_cell :: (sparse: *SparseGrid($T), index: SparseIndex, data: T, cached_grid: *CachedGrid(T)) {
-    grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, index);
-    if cached_grid.grid_index != grid_index {
-        cached_grid.grid_index = grid_index;
-        cached_grid.grid = get_or_add_grid(sparse, index);
-    }
+// set_cell :: (sparse: *SparseGrid($T), index: SparseIndex, data: T) {
+//     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, index);
+//     if sparse.cached_grid.grid_index != grid_index {
+//         sparse.cached_grid.grid_index = grid_index;
+//         sparse.cached_grid.grid = get_or_add_grid(sparse, index);
+//     }
 
-    cached_grid.grid[grid_cell_index] = data;
-}
+//     sparse.cached_grid.grid[grid_cell_index] = data;
+// }
 
 get_cell_boundaries :: (sparse: *SparseGrid) -> [2] SparseIndex {
     aabb: [2] SparseIndex;
