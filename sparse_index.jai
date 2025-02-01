@@ -115,6 +115,14 @@ operator * :: (a: SparseDir, b: s32) -> SparseIndex #symmetric {
     return r;
 }
 
+operator / :: (a: SparseDir, b: float) -> Vector3 {
+    r: Vector3 = ---;
+    r.x = a.x / b;
+    r.y = a.y / b;
+    r.z = a.z / b;
+    return r;
+}
+
 sparse_hash :: inline (a: SparseIndex) -> u32 {
     // find_or_add_time 29.105425 ms
     // str: string = ---;
