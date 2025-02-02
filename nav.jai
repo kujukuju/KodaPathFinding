@@ -97,12 +97,21 @@
 // I can put the visited value inside the grid itself since I already have to get the cell each time I visit
 // you could just prepend the visited heuristic with a search counter, and every visited cell with the wrong search counter
 // is considered unvisited
+// need groups for cells, with a table of group counts that auto merges when groups join and auto split when groups split I guess
+// need to immediate exit paths that dont exist
+// aabb direction nearest bounds
+// maybe need directional goal hints but thats kind of what the aabb thing is
+// need to optimize the actual grid so there's less vertical stuff going on
 
 // optimizing
 // initial jps takes 2231 ms
 // after baking jump distances takes 2.3 ms
 // after fixing issues with jump distances it takes 9.242 ms......
 // implementing a probably not correct fast stack it takes 9.07 ms.....
+
+// new path with sparse grid hash table takes 15.4646 ms
+// same thing with hash table but without cached grid takes 16.5038 ms
+// changed some sparse grid code but still should be all the same, took 18.9117 ms
 
 NavPath :: struct {
     path: [..] SparseIndex;
@@ -127,7 +136,7 @@ wall_checks: [..] [2] SparseIndex;
 
 visualize_checks: int = 10000000;
 
-performance_test :: true;
+performance_test :: false;
 visualize :: false;
 
 path_find_jps :: (sparse: *JumpSparseGrid($T), source_point: Vector3, target_point: Vector3, wall_type: T) -> NavPath {
@@ -216,7 +225,7 @@ path_find_jps :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, target_
         parent_cell: SparseIndex;
     }
 
-    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size_x, sparse.grid_size_y, sparse.grid_size_z, sparse.cell_size);
+    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
     visited.allocator = temp;
 
     heuristic :: (a: ForcedEntry) -> float {
@@ -455,7 +464,7 @@ find_path_a_star :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, targ
         parent_index: SparseIndex;
     }
 
-    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size_x, sparse.grid_size_y, sparse.grid_size_z, sparse.cell_size);
+    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
     visited.allocator = temp;
 
     search_queue: LinkedArray(SearchEntry);

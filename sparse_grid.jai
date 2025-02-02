@@ -1,10 +1,19 @@
 
+sparse_table :: true;
+cached_grid :: true;
+
 SparseGrid :: struct (T: Type) {
+#if sparse_table {
     grids: Table(SparseIndex, [] T, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
+} else {
+    grids: [..] [] T;
+}
     cached_grid: CachedGrid(T);
-    grid_size_x: s32;
-    grid_size_y: s32;
-    grid_size_z: s32;
+#if !sparse_table {
+    grid_min: SparseIndex;
+    grid_max: SparseIndex;
+}
+    grid_size: SparseIndex;
     cell_size: float;
     allocator: Allocator;
 }
@@ -16,9 +25,7 @@ SerializableGrid :: struct (T: Type) {
 
 SerializableSparseGrid :: struct (T: Type) {
     grids: [] SerializableGrid(T);
-    grid_size_x: s32;
-    grid_size_y: s32;
-    grid_size_z: s32;
+    grid_size: SparseIndex;
     cell_size: float;
 }
 
@@ -27,32 +34,45 @@ CachedGrid :: struct (T: Type) {
     grid: [] T;
 }
 
-serialize_grid :: (sparse: SparseGrid($T)) -> SerializableSparseGrid(T) {
-    serializable: SerializableSparseGrid(T);
-    serializable.grids = NewArray(sparse.grids.count, SerializableGrid(T));
-    index := 0;
-    for grid, grid_index: sparse.grids {
-        defer index += 1;
+#if sparse_table {
+    serialize_grid :: (sparse: SparseGrid($T)) -> SerializableSparseGrid(T) {
+        serializable: SerializableSparseGrid(T);
+        serializable.grids = NewArray(sparse.grids.count, SerializableGrid(T));
+        index := 0;
+        for grid, grid_index: sparse.grids {
+            defer index += 1;
 
-        serializable.grids[index].cells = grid;
-        serializable.grids[index].index = grid_index;
+            serializable.grids[index].cells = grid;
+            serializable.grids[index].index = grid_index;
+        }
+        serializable.grid_size = sparse.grid_size;
+        serializable.cell_size = sparse.cell_size;
+        return serializable;
     }
-    serializable.grid_size_x = sparse.grid_size_x;
-    serializable.grid_size_y = sparse.grid_size_y;
-    serializable.grid_size_z = sparse.grid_size_z;
-    serializable.cell_size = sparse.cell_size;
-    return serializable;
+} else {
+    serialize_grid :: (sparse: SparseGrid($T)) -> SerializableSparseGrid(T) {
+        serializable: SerializableSparseGrid(T);
+        serializable.grids = NewArray(sparse.grids.count, SerializableGrid(T));
+        index := 0;
+        for grid, grid_index: sparse.grids {
+            defer index += 1;
+
+            serializable.grids[index].cells = grid;
+            serializable.grids[index].index = get_grid_index(sparse, grid_index);
+        }
+        serializable.grid_size = sparse.grid_size;
+        serializable.cell_size = sparse.cell_size;
+        return serializable;
+    }
 }
 
 deserialize_grid :: (serialized: SerializableSparseGrid($T)) -> SparseGrid(T) {
     sparse: SparseGrid(T);
     sparse.allocator = context.allocator;
-    sparse.grid_size_x = serialized.grid_size_x;
-    sparse.grid_size_y = serialized.grid_size_y;
-    sparse.grid_size_z = serialized.grid_size_z;
+    sparse.grid_size = serialized.grid_size;
     sparse.cell_size = serialized.cell_size;
     for grid: serialized.grids {
-        table_set(*sparse.grids, grid.index, grid.cells);
+        set_grid(*sparse, grid.index, grid.cells);
     }
     return sparse;
 }
@@ -61,41 +81,146 @@ deserialize_grid :: (serialized: SerializableSparseGrid($T)) -> SparseGrid(T) {
 // inside each grid you have a normal 3d array of cells with the specified grid size
 // so grid -> cell
 
-cached_grid :: true;
-
 create_sparse_grid :: ($T: Type, grid_size_x: int, grid_size_y: int, grid_size_z: int, cell_size: float) -> SparseGrid(T) {
     sparse: SparseGrid(T);
-    sparse.grid_size_x = cast(s32) grid_size_x;
-    sparse.grid_size_y = cast(s32) grid_size_y;
-    sparse.grid_size_z = cast(s32) grid_size_z;
+    sparse.grid_size.x = cast(s32) grid_size_x;
+    sparse.grid_size.y = cast(s32) grid_size_y;
+    sparse.grid_size.z = cast(s32) grid_size_z;
     sparse.cell_size = cell_size;
 
     return sparse;
 }
 
-for_expansion :: (sparse: *SparseGrid($T), body: Code, flags: For_Flags) #expand {
-    #assert(!(flags & .REVERSE));
+#if sparse_table {
+    for_expansion :: (sparse: *SparseGrid($T), body: Code, flags: For_Flags) #expand {
+        #assert(!(flags & .REVERSE));
 
-    for grid, grid_index: sparse.grids {
-        #if flags & .POINTER {
-            for *cell, cell_index: grid {
-                cell_x := cell_index % sparse.grid_size_x + grid_index.x * sparse.grid_size_x;
-                cell_y := (cell_index % (sparse.grid_size_x * sparse.grid_size_y)) / sparse.grid_size_x + grid_index.y * sparse.grid_size_y;
-                cell_z := cell_index / (sparse.grid_size_x * sparse.grid_size_y) + grid_index.z * sparse.grid_size_z;
+        for grid, grid_index: sparse.grids {
+            #if flags & .POINTER {
+                for *cell, cell_index: grid {
+                    cell_x := cell_index % sparse.grid_size.x + grid_index.x * sparse.grid_size.x;
+                    cell_y := (cell_index % (sparse.grid_size.x * sparse.grid_size.y)) / sparse.grid_size.x + grid_index.y * sparse.grid_size.y;
+                    cell_z := cell_index / (sparse.grid_size.x * sparse.grid_size.y) + grid_index.z * sparse.grid_size.z;
 
-                `it := cell;
-                `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
-                #insert body;
+                    `it := cell;
+                    `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
+                    #insert body;
+                }
+            } else {
+                for cell, cell_index: grid {
+                    cell_x := cell_index % sparse.grid_size.x + grid_index.x * sparse.grid_size.x;
+                    cell_y := (cell_index % (sparse.grid_size.x * sparse.grid_size.y)) / sparse.grid_size.x + grid_index.y * sparse.grid_size.y;
+                    cell_z := cell_index / (sparse.grid_size.x * sparse.grid_size.y) + grid_index.z * sparse.grid_size.z;
+
+                    `it := cell;
+                    `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
+                    #insert body;
+                }
             }
-        } else {
-            for cell, cell_index: grid {
-                cell_x := cell_index % sparse.grid_size_x + grid_index.x * sparse.grid_size_x;
-                cell_y := (cell_index % (sparse.grid_size_x * sparse.grid_size_y)) / sparse.grid_size_x + grid_index.y * sparse.grid_size_y;
-                cell_z := cell_index / (sparse.grid_size_x * sparse.grid_size_y) + grid_index.z * sparse.grid_size_z;
+        }
+    }
+} else {
+    for_expansion :: (sparse: *SparseGrid($T), body: Code, flags: For_Flags) #expand {
+        #assert(!(flags & .REVERSE));
 
-                `it := cell;
-                `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
-                #insert body;
+        for grid, grid_index: sparse.grids {
+            #if flags & .POINTER {
+                for *cell, cell_index: grid {
+                    grid_sparse_index := get_grid_index(sparse, grid_index);
+                    cell_x := cell_index % sparse.grid_size.x + grid_sparse_index.x * sparse.grid_size.x;
+                    cell_y := (cell_index % (sparse.grid_size.x * sparse.grid_size.y)) / sparse.grid_size.x + grid_sparse_index.y * sparse.grid_size.y;
+                    cell_z := cell_index / (sparse.grid_size.x * sparse.grid_size.y) + grid_sparse_index.z * sparse.grid_size.z;
+
+                    `it := cell;
+                    `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
+                    #insert body;
+                }
+            } else {
+                for cell, cell_index: grid {
+                    grid_sparse_index := get_grid_index(sparse, grid_index);
+                    cell_x := cell_index % sparse.grid_size.x + grid_sparse_index.x * sparse.grid_size.x;
+                    cell_y := (cell_index % (sparse.grid_size.x * sparse.grid_size.y)) / sparse.grid_size.x + grid_sparse_index.y * sparse.grid_size.y;
+                    cell_z := cell_index / (sparse.grid_size.x * sparse.grid_size.y) + grid_sparse_index.z * sparse.grid_size.z;
+
+                    `it := cell;
+                    `it_index := SparseIndex.{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
+                    #insert body;
+                }
+            }
+        }
+    }
+}
+
+#if sparse_table {
+    set_grid :: (sparse: *SparseGrid($T), index: SparseIndex, grid: [] T) {
+        table_set(*sparse.grids, index, grid);
+    }
+} else {
+    set_grid :: (sparse: *SparseGrid($T), index: SparseIndex, grid: [] T) {
+        if sparse.grids.count == 0 {
+            array_add(*sparse.grids, grid);
+            sparse.grid_min = index;
+            sparse.grid_max = index;
+        } else {
+            inside := index.x >= sparse.grid_min.x && index.x <= sparse.grid_min.x;
+            inside = inside && index.y >= sparse.grid_min.y && index.y <= sparse.grid_min.y;
+            inside = inside && index.z >= sparse.grid_min.z && index.z <= sparse.grid_min.z;
+            if inside {
+                grid_index := get_grid_array_index(sparse, index);
+                assert(!sparse.grids[grid_index].data, "Cannot set grid where one already exists.\n");
+                sparse.grids[grid_index] = grid;
+            } else {
+                grid_min := sparse.grid_min;
+                grid_max := sparse.grid_max;
+                grid_min.x = min(grid_min.x, index.x);
+                grid_min.y = min(grid_min.y, index.y);
+                grid_min.z = min(grid_min.z, index.z);
+                grid_max.x = max(grid_max.x, index.x);
+                grid_max.y = max(grid_max.y, index.y);
+                grid_max.z = max(grid_max.z, index.z);
+
+                resize_grid(sparse, grid_min, grid_max);
+
+                grid_index := get_grid_array_index(sparse, index);
+                assert(!sparse.grids[grid_index].data, "Cannot set grid where one already exists.\n");
+                sparse.grids[grid_index] = grid;
+            }
+        }
+    }
+
+    resize_grid :: (sparse: *SparseGrid, grid_min: SparseIndex, grid_max: SparseIndex) {
+        assert(grid_min.x <= sparse.grid_min.x && grid_min.y <= sparse.grid_min.y && grid_min.z <= sparse.grid_min.z, "Cannot decrease grid size yet.\n");
+        assert(grid_max.x >= sparse.grid_max.x && grid_max.y >= sparse.grid_max.y && grid_max.z >= sparse.grid_max.z, "Cannot decrease grid size yet.\n");
+
+        if sparse.grid_min == grid_min && sparse.grid_max == grid_max {
+            return;
+        }
+
+        old_min := sparse.grid_min;
+        old_max := sparse.grid_max;
+        old_size := old_max - old_min + SparseIndex.{1, 1, 1};
+        delta := old_min - grid_min;
+
+        sparse.grid_min = grid_min;
+        sparse.grid_max = grid_max;
+        new_size := grid_max - grid_min + SparseIndex.{1, 1, 1};
+
+        array_resize(*sparse.grids, new_size.x * new_size.y * new_size.z);
+
+        // because we can only ever increase the size we just have to go in reverse order I guess
+
+        for #v2 < z_offset: 0..old_size.z - 1 {
+            z_offset_new := z_offset + delta.z;
+            for #v2 < y_offset: 0..old_size.y - 1 {
+                y_offset_new := y_offset + delta.y;
+                for #v2 < x_offset: 0..old_size.x - 1 {
+                    x_offset_new := x_offset + delta.x;
+
+                    old_index := z_offset * old_size.x * old_size.y + y_offset * old_size.x + x_offset;
+                    new_index := z_offset_new * new_size.x * new_size.y + y_offset_new * new_size.x + x_offset_new;
+
+                    sparse.grids[old_index], sparse.grids[new_index] = sparse.grids[new_index], sparse.grids[old_index];
+                }
             }
         }
     }
@@ -111,7 +236,7 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
     get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
         grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
         if sparse.cached_grid.grid_index != grid_index {
-            grid, grid_found := table_find(*sparse.grids, grid_index);
+            grid, grid_found := get_grid(sparse, grid_index);
             if grid_found {
                 sparse.cached_grid.grid_index = grid_index;
                 sparse.cached_grid.grid = grid;
@@ -126,7 +251,7 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
 } else {
     get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
         grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
-        grid, grid_found := table_find(*sparse.grids, grid_index);
+        grid, grid_found := get_grid(sparse, grid_index);
         if grid_found {
             return grid[grid_cell_index], true;
         }
@@ -136,6 +261,7 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
 }
 
 get_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T, bool {
+    // TODO cache
     grid_index, grid_cell_index := get_grid_and_cell_indices(sparse, cell_index);
     grid, grid_found := table_find(*sparse.grids, grid_index);
     if grid_found {
@@ -192,14 +318,14 @@ get_cell_boundaries :: (sparse: *SparseGrid) -> [2] SparseIndex {
 
     for _, grid_index: sparse {
         cell_start := grid_index;
-        cell_start.x *= cast(s32) sparse.grid_size_x;
-        cell_start.y *= cast(s32) sparse.grid_size_y;
-        cell_start.z *= cast(s32) sparse.grid_size_z;
+        cell_start.x *= cast(s32) sparse.grid_size.x;
+        cell_start.y *= cast(s32) sparse.grid_size.y;
+        cell_start.z *= cast(s32) sparse.grid_size.z;
 
         cell_end := cell_start;
-        cell_end.x += cast(s32) sparse.grid_size_x - 1;
-        cell_end.y += cast(s32) sparse.grid_size_y - 1;
-        cell_end.z += cast(s32) sparse.grid_size_z - 1;
+        cell_end.x += cast(s32) sparse.grid_size.x - 1;
+        cell_end.y += cast(s32) sparse.grid_size.y - 1;
+        cell_end.z += cast(s32) sparse.grid_size.z - 1;
 
         if !aabb_set {
             aabb_set = true;
@@ -300,13 +426,13 @@ for_expansion :: (iterator: CellIterator($IT), body: Code, flags: For_Flags) #ex
     for grid, grid_index: get_grids_from_line(iterator.sparse, iterator.line) {
         grid_aabb := get_grid_aabb(iterator.sparse, grid_index);
 
-        grid_cell_start_x := cast(s32) (grid_index.x * iterator.sparse.grid_size_x);
-        grid_cell_start_y := cast(s32) (grid_index.y * iterator.sparse.grid_size_y);
-        grid_cell_start_z := cast(s32) (grid_index.z * iterator.sparse.grid_size_z);
+        grid_cell_start_x := cast(s32) (grid_index.x * iterator.sparse.grid_size.x);
+        grid_cell_start_y := cast(s32) (grid_index.y * iterator.sparse.grid_size.y);
+        grid_cell_start_z := cast(s32) (grid_index.z * iterator.sparse.grid_size.z);
 
-        grid_cell_end_x := cast(s32) (grid_cell_start_x + iterator.sparse.grid_size_x - 1);
-        grid_cell_end_y := cast(s32) (grid_cell_start_y + iterator.sparse.grid_size_y - 1);
-        grid_cell_end_z := cast(s32) (grid_cell_start_z + iterator.sparse.grid_size_z - 1);
+        grid_cell_end_x := cast(s32) (grid_cell_start_x + iterator.sparse.grid_size.x - 1);
+        grid_cell_end_y := cast(s32) (grid_cell_start_y + iterator.sparse.grid_size.y - 1);
+        grid_cell_end_z := cast(s32) (grid_cell_start_z + iterator.sparse.grid_size.z - 1);
 
         start_position := ray.p;
         if !contains(grid_aabb, start_position) {
@@ -374,10 +500,23 @@ get_cell_index :: (sparse: SparseGrid, point: Vector3) -> SparseIndex {
 }
 
 get_cell_index :: (sparse: SparseGrid, grid_index: SparseIndex, cell_index: int) -> SparseIndex {
-    cell_x := cell_index % sparse.grid_size_x + grid_index.x * sparse.grid_size_x;
-    cell_y := (cell_index % (sparse.grid_size_x * sparse.grid_size_y)) / sparse.grid_size_x + grid_index.y * sparse.grid_size_y;
-    cell_z := cell_index / (sparse.grid_size_x * sparse.grid_size_y) + grid_index.z * sparse.grid_size_z;
+    cell_x := cell_index % sparse.grid_size.x + grid_index.x * sparse.grid_size.x;
+    cell_y := (cell_index % (sparse.grid_size.x * sparse.grid_size.y)) / sparse.grid_size.x + grid_index.y * sparse.grid_size.y;
+    cell_z := cell_index / (sparse.grid_size.x * sparse.grid_size.y) + grid_index.z * sparse.grid_size.z;
     return .{cast(s32) cell_x, cast(s32) cell_y, cast(s32) cell_z};
+}
+
+get_grid_array_index :: (sparse: SparseGrid, grid_index: SparseIndex) -> int, bool {
+    outside := grid_index.x < sparse.grid_min.x || grid_index.y < sparse.grid_min.y || grid_index.z < sparse.grid_min.z;
+    outside = outside || grid_index.x > sparse.grid_max.x || grid_index.y > sparse.grid_max.y || grid_index.z > sparse.grid_max.z;
+    if outside {
+        return 0, false;
+    }
+
+    delta := grid_index - sparse.grid_min;
+    size := sparse.grid_max - sparse.grid_min + SparseIndex.{1, 1, 1};
+
+    return delta.z * size.x * size.y + delta.y * size.x + delta.x, true;
 }
 
 get_grid_index :: (sparse: SparseGrid, point: Vector3) -> SparseIndex {
@@ -385,25 +524,25 @@ get_grid_index :: (sparse: SparseGrid, point: Vector3) -> SparseIndex {
     return get_grid_index(sparse, cell_index);
 }
 
+get_grid_index :: (sparse: SparseGrid, grid_index: int) -> SparseIndex {
+    size := sparse.grid_max - sparse.grid_min + SparseIndex.{1, 1, 1};
+    x := grid_index % size.x;
+    y := (grid_index % (size.x * size.y)) / size.x;
+    z := grid_index / (size.x * size.y);
+    return .{cast(s32) x, cast(s32) y, cast(s32) z} + sparse.grid_min;
+}
+
 get_grid_index :: (sparse: SparseGrid, cell_index: SparseIndex) -> SparseIndex {
-    // test_grid_x := cast(s32) floor(cast(float) cell_index.x / sparse.grid_size_x);
-    // test_grid_y := cast(s32) floor(cast(float) cell_index.y / sparse.grid_size_y);
-    // test_grid_z := cast(s32) floor(cast(float) cell_index.z / sparse.grid_size_z);
-
-    grid_size_x := sparse.grid_size_x;
-    grid_size_y := sparse.grid_size_y;
-    grid_size_z := sparse.grid_size_z;
-
     sub_x := cast(s32) (((cast,no_check(u32) cell_index.x) & 0x80000000) >> 31);
     sub_y := cast(s32) (((cast,no_check(u32) cell_index.y) & 0x80000000) >> 31);
     sub_z := cast(s32) (((cast,no_check(u32) cell_index.z) & 0x80000000) >> 31);
-    sub_x = sub_x * grid_size_x - sub_x;
-    sub_y = sub_y * grid_size_y - sub_y;
-    sub_z = sub_z * grid_size_z - sub_z;
+    sub_x = sub_x * sparse.grid_size.x - sub_x;
+    sub_y = sub_y * sparse.grid_size.y - sub_y;
+    sub_z = sub_z * sparse.grid_size.z - sub_z;
 
-    grid_x := (cell_index.x - sub_x) / grid_size_x;
-    grid_y := (cell_index.y - sub_y) / grid_size_y;
-    grid_z := (cell_index.z - sub_z) / grid_size_z;
+    grid_x := (cell_index.x - sub_x) / sparse.grid_size.x;
+    grid_y := (cell_index.y - sub_y) / sparse.grid_size.y;
+    grid_z := (cell_index.z - sub_z) / sparse.grid_size.z;
 
     return SparseIndex.{grid_x, grid_y, grid_z};
 }
@@ -411,19 +550,16 @@ get_grid_index :: (sparse: SparseGrid, cell_index: SparseIndex) -> SparseIndex {
 get_grid_and_cell_indices :: (sparse: SparseGrid, cell_index: SparseIndex) -> SparseIndex, int {
     grid_index := get_grid_index(sparse, cell_index);
 
-    // test_cell_offset_x := clamp(cell_index.x - test_grid_index.x * sparse.grid_size_x, 0, sparse.grid_size_x - 1);
-    // test_cell_offset_y := clamp(cell_index.y - test_grid_index.y * sparse.grid_size_y, 0, sparse.grid_size_y - 1);
-    // test_cell_offset_z := clamp(cell_index.z - test_grid_index.z * sparse.grid_size_z, 0, sparse.grid_size_z - 1);
-    cell_offset_x := cell_index.x - grid_index.x * sparse.grid_size_x;
-    cell_offset_y := cell_index.y - grid_index.y * sparse.grid_size_y;
-    cell_offset_z := cell_index.z - grid_index.z * sparse.grid_size_z;
+    cell_offset_x := cell_index.x - grid_index.x * sparse.grid_size.x;
+    cell_offset_y := cell_index.y - grid_index.y * sparse.grid_size.y;
+    cell_offset_z := cell_index.z - grid_index.z * sparse.grid_size.z;
 
-    return grid_index, cell_offset_z * (sparse.grid_size_x * sparse.grid_size_y) + cell_offset_y * sparse.grid_size_x + cell_offset_x;
+    return grid_index, cell_offset_z * (sparse.grid_size.x * sparse.grid_size.y) + cell_offset_y * sparse.grid_size.x + cell_offset_x;
 }
 
 get_grid_aabb :: (sparse: SparseGrid, grid_index: SparseIndex) -> AABB3 {
     grid_dimensions := Vector3.{sparse.cell_size, sparse.cell_size, sparse.cell_size};
-    grid_dimensions *= .{cast(float) sparse.grid_size_x, cast(float) sparse.grid_size_y, cast(float) sparse.grid_size_z};
+    grid_dimensions *= .{cast(float) sparse.grid_size.x, cast(float) sparse.grid_size.y, cast(float) sparse.grid_size.z};
 
     aabb: AABB3;
     aabb.lower = grid_dimensions * .{cast(float) grid_index.x, cast(float) grid_index.y, cast(float) grid_index.z};
@@ -454,22 +590,44 @@ get_cell_position :: (sparse: SparseGrid($T), cell_index: SparseIndex) -> Vector
     };
 }
 
-get_grid_position :: (sparse: SparseGrid($T), grid_index: int) -> Vector3 {
-    return .{grid_index.x * sparse.grid_size_x, grid_index.y * sparse.grid_size_y, grid_index.z * sparse.grid_size_z};
-}
-
-get_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T, bool {
-    grid, found := table_find(*sparse.grids, index);
-    return grid, found;
-}
-
-get_or_add_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T {
-    grid, added := find_or_add(*sparse.grids, index,, sparse.allocator);
-    if added {
-        grid_count := sparse.grid_size_x * sparse.grid_size_y * sparse.grid_size_z;
-        grid.* = NewArray(grid_count, T,, sparse.allocator);
+#if sparse_table {
+    get_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T, bool {
+        grid, found := table_find(*sparse.grids, index);
+        return grid, found;
     }
-    return grid.*;
+} else {
+    get_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T, bool {
+        grid_array_index, index_valid := get_grid_array_index(sparse, index);
+        if !index_valid || sparse.grids[grid_array_index].count == 0 {
+            return .[], false;
+        }
+
+        return sparse.grids[grid_array_index], true;
+    }
+}
+
+#if sparse_table {
+    get_or_add_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T {
+        grid, added := find_or_add(*sparse.grids, index,, sparse.allocator);
+        if added {
+            grid_count := sparse.grid_size.x * sparse.grid_size.y * sparse.grid_size.z;
+            grid.* = NewArray(grid_count, T,, sparse.allocator);
+        }
+        return grid.*;
+    }
+} else {
+    get_or_add_grid :: (sparse: *SparseGrid($T), index: SparseIndex) -> [] T {
+        grid, exists := get_grid(sparse, index);
+        if exists {
+            return grid;
+        }
+
+        grid_count := sparse.grid_size.x * sparse.grid_size.y * sparse.grid_size.z;
+        grid = NewArray(grid_count, T,, sparse.allocator);
+
+        set_grid(sparse, index, grid);
+        return grid;
+    }
 }
 
 #scope_module
