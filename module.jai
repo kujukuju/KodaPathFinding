@@ -1,5 +1,6 @@
 
 #load "binary_heap.jai";
+#load "grid_generator.jai";
 #load "jump_sparse_grid.jai";
 #load "nav.jai";
 #load "sparse_grid.jai";
