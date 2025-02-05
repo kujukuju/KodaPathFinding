@@ -32,8 +32,16 @@ GridMove :: struct {
 
 // plans
 // if you moved to a vertically adjacent cell in either direction, we will connect those cells
-// if you fall down when going to the next cell
-// we will connect the cells
+// if you fall down when going to the next cell we will connect the calls as fall cells
+// if you managed to fall from one location to another there will be a second pass that will try to jump up all your falls
+// if that succeeds then those nodes will be marked as jumpable
+// all jumpable really means is that the jump distances pointing in those specific directions are positive
+// and then possible I need to do a pass where I trim or at least mark cells as near edge cells
+// so that if you're trying to walk to the end without falling you won't go through these cells
+// so I think the implication is... maybe... these cells can't traverse into each other but only
+// diagonally towards the edge or away from the edge
+// I think this would inherently prevent the path finding from letting you even enter the edge
+// cells unless you actually want to fall down the wall or jump up the wall
 
 destroy :: (grid_generator: *GridGenerator) {
     array_free(grid_generator.internals.move_queue);
