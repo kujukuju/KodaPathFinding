@@ -19,8 +19,11 @@ GridGenerator :: struct (T: Type, D: Type) {
         setting_position: bool;
         moving: bool;
         current_iteration_count: int;
+        current_fall_count: int;
         body_last_position: Vector3;
+        moving_cells: [..] SparseIndex;
         move_queue: [..] GridMove;
+        line_cells_buffer: [..] SparseIndex;
         visited_ground: Table(SparseIndex, bool, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
     };
 }
@@ -44,7 +47,9 @@ GridMove :: struct {
 // cells unless you actually want to fall down the wall or jump up the wall
 
 destroy :: (grid_generator: *GridGenerator) {
+    array_free(grid_generator.internals.moving_cells);
     array_free(grid_generator.internals.move_queue);
+    array_free(grid_generator.internals.line_cells_buffer);
     deinit(*grid_generator.internals.visited_ground);
 }
 
@@ -117,18 +122,32 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         setting_position = false;
         moving = false;
         current_iteration_count = 0;
+        current_fall_count = 0;
 
         move_queue.count -= 1;
 
         return false;
     }
 
-    defer current_iteration_count += 1;
+    start_position := get_character_position(data);
 
-    if current_iteration_count > 40 {
+    // TODO this isn't really right... it needs to be based on gravity speed * delta time or something
+    defer {
+        end_position := get_character_position(data);
+        delta_position := end_position - start_position;
+
+        if delta_position.y > -0.1 {
+            current_iteration_count += 1;
+        } else {
+            current_fall_count += 1;
+        }
+    }
+
+    if current_iteration_count > 20 || current_fall_count > 120 || !contains(aabb, get_cell_position(sparse.grid, grid_move.from)) {
         setting_position = false;
         moving = false;
         current_iteration_count = 0;
+        current_fall_count = 0;
 
         move_queue.count -= 1;
 
@@ -136,17 +155,24 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
     }
 
     if !setting_position && !moving {
+        // we're updating our position to the desired start cell
         setting_position = true;
         moving = false;
         current_iteration_count = 0;
+        current_fall_count = 0;
 
         set_character_position(get_cell_position(sparse.grid, grid_move.from), data);
         update_physics(delta_time, data);
 
         body_last_position = get_character_position(data);
 
+        moving_cells.count = 0;
+        array_add(*moving_cells, grid_move.from);
+
         return false;
     } else if setting_position {
+        // we're trying to stabilize into the desired start cell
+        // so after we stop moving we can go on into finding the path to the next cell
         velocity := get_character_velocity(data);
         velocity.x = 0;
         velocity.z = 0;
@@ -154,6 +180,11 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         set_character_velocity(velocity, data);
         update_physics(delta_time, data);
         position := get_character_position(data);
+
+        position_cell := get_cell_index(sparse.grid, position);
+        if moving_cells[moving_cells.count - 1] != position_cell {
+            array_add(*moving_cells, position_cell);
+        }
 
         delta_position := position - body_last_position;
         body_last_position = position;
@@ -164,10 +195,13 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
             setting_position = false;
             moving = true;
             current_iteration_count = 0;
+            current_fall_count = 0;
         }
 
         return false;
     } else if moving {
+        // we will iteratively try to move into the actual desired start cell
+        // in the xz plane only, and if we make it there we did it
         velocity := get_character_velocity(data);
 
         position := get_character_position(data);
@@ -189,27 +223,39 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         update_physics(delta_time, data);
         position = get_character_position(data);
 
+        position_cell := get_cell_index(sparse.grid, position);
+        if moving_cells[moving_cells.count - 1] != position_cell {
+            array_add(*moving_cells, position_cell);
+        }
+
         delta_position := position - body_last_position;
         body_last_position = position;
 
         on_ground := is_character_on_ground(data);
-        stopped_moving := length(delta_position) < 0.0001;
+        stopped_moving := length(delta_position) < 0.01;
 
         if stopped_moving {
             setting_position = false;
             moving = false;
             current_iteration_count = 0;
+            current_fall_count = 0;
 
             move_queue.count -= 1;
 
-            position_cell := get_cell_index(sparse.grid, position);
-            delta_first_cell := position_cell - grid_move.to;
-            if on_ground && delta_first_cell.x == 0 && delta_first_cell.z == 0 /*&& abs(delta_first_cell.y) <= 1*/ {
+            // delta_first_cell := position_cell - grid_move.to;
+            if on_ground { // && delta_first_cell.x == 0 && delta_first_cell.z == 0 /*&& abs(delta_first_cell.y) <= 1*/ {
                 if table_contains(*visited_ground, position_cell) {
                     return false;
                 }
 
-                mark_ground(generator, sparse, position_cell);
+                line_cells_buffer.count = 0;
+                get_line(moving_cells, *line_cells_buffer);
+
+                for line_cell: line_cells_buffer {
+                    // we don't count line cells as visited for the same logic of
+                    // why we won't continue the iteration of these cells mid air
+                    mark_ground(generator, sparse, line_cell);
+                }
 
                 table_set(*visited_ground, position_cell, true);
 
@@ -240,222 +286,6 @@ mark_ground :: (using generator: *GridGenerator($T, $D), sparse: *JumpSparseGrid
 
     if grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse.grid, cell_index), cell_index);
 }
-
-/*
-construct_grouped_sparse_grid :: (generator: GridGenerator($T, $D), sparse: *JumpSparseGrid(T), aabb: AABB3) {
-    start_index := get_cell_index(*sparse.grid, aabb.lower);
-    end_index := get_cell_index(*sparse.grid, aabb.upper);
-
-    start_grid_index := get_grid_index(*sparse.grid, start_index);
-    end_grid_index := get_grid_index(*sparse.grid, end_index);
-
-    ground_add_x := cast(s32) sign(info.gravity_direction.x);
-    ground_add_y := cast(s32) sign(info.gravity_direction.y);
-    ground_add_z := cast(s32) sign(info.gravity_direction.z);
-
-    // grid_count_x := end_grid_index.x - start_grid_index.x + 1;
-    // grid_count_y := end_grid_index.y - start_grid_index.y + 1;
-    // grid_count_z := end_grid_index.z - start_grid_index.z + 1;
-
-    count_x := end_index.x - start_index.x + 1;
-    count_y := end_index.y - start_index.y + 1;
-    count_z := end_index.z - start_index.z + 1;
-
-    cells_empty := NewArray(count_x * count_y * count_z, bool);
-    defer array_free(cells_empty);
-
-    ATTEMPT_OPTIMIZATION :: true;
-    #if ATTEMPT_OPTIMIZATION {
-        for grid_z: start_grid_index.z..end_grid_index.z {
-            cell_start_z := max(grid_z * sparse.grid_size_z, start_index.z);
-            cell_end_z := min(cell_start_z + sparse.grid_size_z - 1, end_index.z);
-
-            for grid_y: start_grid_index.y..end_grid_index.y {
-                cell_start_y := max(grid_y * sparse.grid_size_y, start_index.y);
-                cell_end_y := min(cell_start_y + sparse.grid_size_y - 1, end_index.y);
-
-                for grid_x: start_grid_index.x..end_grid_index.x {
-                    cell_start_x := max(grid_x * sparse.grid_size_x, start_index.x);
-                    cell_end_x := min(cell_start_x + sparse.grid_size_x - 1, end_index.x);
-
-                    start_aabb := get_cell_aabb(*sparse.grid, cell_start_x, cell_start_y, cell_start_z);
-                    end_aabb := get_cell_aabb(*sparse.grid, cell_end_x, cell_end_y, cell_end_z);
-                    grid_aabb := merge(start_aabb, end_aabb);
-
-                    // try to early out the entire call if possible
-                    if info.get_grid_empty && info.get_grid_empty(grid_aabb, info.data) {
-                        for cell_z: cell_start_z..cell_end_z {
-                            offset_z := cell_z - start_index.z;
-
-                            for cell_y: cell_start_y..cell_end_y {
-                                offset_y := cell_y - start_index.y;
-
-                                for cell_x: cell_start_x..cell_end_x {
-                                    offset_x := cell_x - start_index.x;
-
-                                    cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-                                    cells_empty[cell_index] = true;
-                                }
-                            }
-                        }
-
-                        continue;
-                    }
-
-                    for cell_z: cell_start_z..cell_end_z {
-                        offset_z := cell_z - start_index.z;
-
-                        for cell_y: cell_start_y..cell_end_y {
-                            offset_y := cell_y - start_index.y;
-
-                            for cell_x: cell_start_x..cell_end_x {
-                                offset_x := cell_x - start_index.x;
-
-                                cell_aabb := get_cell_aabb(*sparse.grid, cell_x, cell_y, cell_z);
-                                cell_empty := info.get_cell_empty(cell_aabb, info.data);
-
-                                cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-                                cells_empty[cell_index] = cell_empty;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        for cell_z: start_index.z..end_index.z {
-            offset_z := cell_z - start_index.z;
-
-            for cell_y: start_index.y..end_index.y {
-                offset_y := cell_y - start_index.y;
-
-                for cell_x: start_index.x..end_index.x {
-                    offset_x := cell_x - start_index.x;
-
-                    cell_aabb := get_cell_aabb(*sparse.grid, cell_x, cell_y, cell_z);
-                    cell_empty := info.get_cell_empty(cell_aabb, info.data);
-
-                    cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-                    cells_empty[cell_index] = cell_empty;
-                }
-            }
-        }
-    }
-
-    for offset_z: cast(s32) 0..count_z - 1 {
-        for offset_y: cast(s32) 0..count_y - 1 {
-            for offset_x: cast(s32) 0..count_x - 1 {
-                ground_offset_x := offset_x + ground_add_x;
-                ground_offset_y := offset_y + ground_add_y;
-                ground_offset_z := offset_z + ground_add_z;
-
-                inside_range := ground_offset_x >= 0 && ground_offset_x < count_x;
-                inside_range = inside_range && ground_offset_y >= 0 && ground_offset_y < count_y;
-                inside_range = inside_range && ground_offset_z >= 0 && ground_offset_z < count_z;
-                if !inside_range {
-                    continue;
-                }
-
-                cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-                cell_empty := cells_empty[cell_index];
-
-                if !cell_empty {
-                    continue;
-                }
-
-                ground_index := ground_offset_z * count_x * count_y + ground_offset_y * count_x + ground_offset_x;
-                ground_empty := cells_empty[ground_index];
-
-                if ground_empty {
-                    continue;
-                }
-
-                set_cell(sparse, SparseIndex.{start_index.x + offset_x, start_index.y + offset_y, start_index.z + offset_z}, info.empty_type);
-                set_cell(sparse, SparseIndex.{start_index.x + ground_offset_x, start_index.y + ground_offset_y, start_index.z + ground_offset_z}, info.ground_type);
-            }
-        }
-    }
-
-    edges :: [3] [3] s8.[
-        .[
-            .[-1, -1, 0],
-            .[-1, 0, 0],
-            .[-1, 1, 0],
-        ], .[
-            .[1, -1, 0],
-            .[1, 0, 0],
-            .[1, 1, 0],
-        ], .[
-            .[0, -1, -1],
-            .[0, 0, -1],
-            .[0, 1, -1],
-        ], .[
-            .[0, -1, 1],
-            .[0, 0, 1],
-            .[0, 1, 1],
-        ],
-    ];
-
-    // don't do this for performance test
-    // for offset_z: cast(s32) 0..count_z - 1 {
-    //     for offset_y: cast(s32) 0..count_y - 1 {
-    //         for offset_x: cast(s32) 0..count_x - 1 {
-    //             cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-    //             if cells_empty[cell_index] {
-    //                 continue;
-    //             }
-
-    //             for edge_group: edges {
-    //                 for edge: edge_group {
-    //                     edge_offset_x := offset_x + edge[0];
-    //                     edge_offset_y := offset_y + edge[1];
-    //                     edge_offset_z := offset_z + edge[2];
-
-    //                     is_empty_edge := edge_offset_x < 0 || edge_offset_x >= count_x;
-    //                     is_empty_edge = is_empty_edge || edge_offset_y < 0 || edge_offset_y >= count_y;
-    //                     is_empty_edge = is_empty_edge || edge_offset_z < 0 || edge_offset_z >= count_z;
-
-    //                     edge_index := edge_offset_z * count_x * count_y + edge_offset_y * count_x + edge_offset_x;
-    //                     is_empty_edge = is_empty_edge || cells_empty[edge_index];
-
-    //                     if !is_empty_edge {
-    //                         continue edge_group;
-    //                     }
-    //                 }
-
-    //                 // if we've finished looking at all the edges in a given edge group
-    //                 // and we haven't found a non-empty cell, then we remove this cell
-
-    //                 set_cell(sparse, SparseIndex.{start_index.x + offset_x, start_index.y + offset_y, start_index.z + offset_z}, info.empty_type);
-    //             }
-    //         }
-    //     }
-    // }
-
-
-
-    for #v2 < offset_y: cast(s32) 0..count_y - 1 {
-        for offset_z: cast(s32) 0..count_z - 1 {
-            for offset_x: cast(s32) 0..count_x - 1 {
-                cell_index := SparseIndex.{start_index.x + offset_x, start_index.y + offset_y, start_index.z + offset_z};
-
-                if get_cell(sparse, cell_index) == info.empty_type {
-                    continue;
-                }
-
-                set_cell(sparse, cell_index + SparseDir.{0, 1, 0}, info.ground_type);
-
-                // cell_index := offset_z * count_x * count_y + offset_y * count_x + offset_x;
-                // if cells_empty[cell_index] {
-                //     continue;
-                // }
-
-                // set_cell(sparse, SparseIndex.{start_index.x + offset_x, start_index.y + offset_y + 1, start_index.z + offset_z}, info.ground_type);
-            }
-        }
-    }
-}
-*/
 
 #scope_file
 
@@ -691,5 +521,39 @@ calculate_forced_neighbor :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, di
     }
 
     return forced_offsets, !!forced_offsets;
+}
+
+get_line :: (points: [] SparseIndex, result: *[..] SparseIndex) {
+    for i: 0..points.count - 2 {
+        start_result_index := result.count;
+        get_line(points[i], points[i + 1], result);
+
+        if start_result_index > 0 {
+            if result.*[start_result_index] == result.*[start_result_index - 1] {
+                array_ordered_remove_by_index(result, start_result_index);
+            }
+        }
+    }
+}
+
+// TODO I could add in a floating point delta value that I could use to decide which direction the line moves in for the next iteration
+get_line :: (p1: SparseIndex, p2: SparseIndex, result: *[..] SparseIndex) {
+    current := p1;
+
+    array_add(result, current);
+
+    while current != p2 {
+        pdelta := p2 - current;
+
+        if abs(pdelta.x) >= abs(pdelta.y) && abs(pdelta.x) >= abs(pdelta.z) {
+            current += SparseIndex.{pdelta.x, 0, 0};
+        } else if abs(pdelta.y) >= abs(pdelta.x) && abs(pdelta.y) >= abs(pdelta.z) {
+            current += SparseIndex.{0, pdelta.y, 0};
+        } else if abs(pdelta.z) >= abs(pdelta.x) && abs(pdelta.z) >= abs(pdelta.y) {
+            current += SparseIndex.{0, 0, pdelta.z};
+        }
+
+        array_add(result, current);
+    }
 }
 
