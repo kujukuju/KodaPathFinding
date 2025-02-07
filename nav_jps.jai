@@ -103,6 +103,8 @@
 // maybe need directional goal hints but thats kind of what the aabb thing is
 // need to optimize the actual grid so there's less vertical stuff going on
 // prune useless air cells that
+// right now I'm allowing multiple aabbs to contain the same cells.... should I not and instead make the calculate cell goal boundary directions function
+// restricted to the actual jps movement rules?
 
 // optimizing
 // initial jps takes 2231 ms
@@ -113,6 +115,9 @@
 // new path with sparse grid hash table takes 15.4646 ms
 // same thing with hash table but without cached grid takes 16.5038 ms
 // changed some sparse grid code but still should be all the same, took 18.9117 ms
+
+// without goal bounds checking it took 6.05 ms unoptimized
+// with goal bounds checking
 
 NavPath :: struct {
     path: [..] SparseIndex;
@@ -242,8 +247,10 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         start_cell,
         0,
         grid_heuristic(start_cell, end_cell),
-        .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ,
+        get_bounded_offsets(sparse, start_cell, end_cell),
     };
+
+    print("starting offset is %\n", start_entry.forced_offsets);
 
     fast_stack: [..] ForcedEntry;
     fast_stack.allocator = temp;
@@ -392,13 +399,17 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                         new_forced_offsets |= travel_offsets[offset.x + 1][offset.y + 1][offset.z + 1];
                     }
 
-                    push_open_entry(*open_queue, *fast_stack, ForcedEntry.{
-                        jump_cell,
-                        forced_cell,
-                        new_travelled_distance,
-                        new_travelled_distance + grid_heuristic(jump_cell, end_cell),
-                        new_forced_offsets,
-                    });
+                    new_forced_offsets &= get_bounded_offsets(sparse, jump_cell, end_cell);
+
+                    if new_forced_offsets {
+                        push_open_entry(*open_queue, *fast_stack, ForcedEntry.{
+                            jump_cell,
+                            forced_cell,
+                            new_travelled_distance,
+                            new_travelled_distance + grid_heuristic(jump_cell, end_cell),
+                            new_forced_offsets,
+                        });
+                    }
                 }
             }
         }
@@ -489,6 +500,17 @@ is_wall :: (cell_type: $T, wall_type: T) -> bool {
 
 is_empty :: (cell_type: $T, wall_type: T) -> bool {
     return !is_wall(cell_type, wall_type);
+}
+
+get_bounded_offsets :: (sparse: *SparseGrid($A), cell: SparseIndex, end_cell: SparseIndex) -> ForcedOffsets {
+    bounded_offsets: ForcedOffsets;
+    goal_bounds := get_cell(sparse, cell).goal_bounds;
+    for offset, offset_index: offsets {
+        if contains(goal_bounds.bounds[offset_index], end_cell) {
+            bounded_offsets |= cast(ForcedOffsets) (1 << offset_index);
+        }
+    }
+    return bounded_offsets;
 }
 
 // TODO after getting the jump distance you need to check if this jump goes past the end point in any

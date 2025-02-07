@@ -108,12 +108,12 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
 
     NearestDirection :: struct {
         distance: float;
-        best_direction_index: u8;
+        best_offsets: ForcedOffsets;
     }
 
     SearchEntry :: struct {
         cell_index: SparseIndex;
-        direction_index: u8;
+        direction_index: ForcedOffsets;
         current_distance: float;
     }
 
@@ -207,7 +207,7 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
                 if jump_distance != -1 {
                     insert(*request.search_queue, SearchEntry.{
                         cell_index + offset,
-                        cast(u8) offset_index,
+                        cast(ForcedOffsets) (1 << offset_index),
                         offset_distances[offset_index],
                     });
 
@@ -228,9 +228,14 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
                 }
 
                 nearest_direction := get_or_add_cell_pointer(*request.nearest_directions, search_entry.cell_index);
-                if nearest_direction.distance == 0 || nearest_direction.distance > search_entry.current_distance {
-                    nearest_direction.distance = search_entry.current_distance;
-                    nearest_direction.best_direction_index = search_entry.direction_index;
+                if nearest_direction.distance == 0 || nearest_direction.distance >= search_entry.current_distance - 0.01 {
+                    if abs(nearest_distance.distance - search_entry.current_distance) <= 0.01 {
+                        nearest_direction.distance = search_entry.current_distance;
+                        nearest_direction.best_offsets |= search_entry.direction_index;
+                    } else {
+                        nearest_direction.distance = search_entry.current_distance;
+                        nearest_direction.best_offsets = search_entry.direction_index;
+                    }
 
                     // if this is at least currently the best cell for this guy, we will continue in this direction
                     for offset, offset_index: offsets {
@@ -243,15 +248,13 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
                             next_distance := search_entry.current_distance + offset_distances[offset_index];
 
                             next_direction, next_direction_found := get_cell(*request.nearest_directions, next_cell_index);
-                            if next_direction_found && next_direction.distance != 0 && next_direction.distance <= next_distance {
-                                continue;
+                            if !next_direction_found || next_direction.distance == 0 || next_direction.distance >= next_distance - 0.01 {
+                                insert(*request.search_queue, SearchEntry.{
+                                    next_cell_index,
+                                    search_entry.direction_index,
+                                    next_distance,
+                                });
                             }
-
-                            insert(*request.search_queue, SearchEntry.{
-                                next_cell_index,
-                                search_entry.direction_index,
-                                next_distance,
-                            });
                         }
                     }
                 }
@@ -260,16 +263,21 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
             // at this point we've marked every reachable cell we can find as belonging to some nearest direction
             // so we can go and construct all of the goal bounds
             for nearest_cell, nearest_cell_index: request.nearest_directions {
-                offset_index := nearest_cell.best_direction_index;
+                best_offsets := nearest_cell.best_offsets;
 
-                goal_bounds := *request.cell_goal_bounds[check_cell_index].bounds[offset_index];
+                for offset_index: 0..offsets.count - 1 {
+                    potential_offset := cast(ForcedOffsets) (1 << offset_index);
+                    if best_offset & potential_offset {
+                        goal_bounds := *request.cell_goal_bounds[check_cell_index].bounds[offset_index];
 
-                goal_bounds.lower.x = cast(s16) min(cast(s32) goal_bounds.lower.x, nearest_cell_index.x);
-                goal_bounds.lower.y = cast(s16) min(cast(s32) goal_bounds.lower.y, nearest_cell_index.y);
-                goal_bounds.lower.z = cast(s16) min(cast(s32) goal_bounds.lower.z, nearest_cell_index.z);
-                goal_bounds.upper.x = cast(s16) max(cast(s32) goal_bounds.upper.x, nearest_cell_index.x);
-                goal_bounds.upper.y = cast(s16) max(cast(s32) goal_bounds.upper.y, nearest_cell_index.y);
-                goal_bounds.upper.z = cast(s16) max(cast(s32) goal_bounds.upper.z, nearest_cell_index.z);
+                        goal_bounds.lower.x = cast(s16) min(cast(s32) goal_bounds.lower.x, nearest_cell_index.x);
+                        goal_bounds.lower.y = cast(s16) min(cast(s32) goal_bounds.lower.y, nearest_cell_index.y);
+                        goal_bounds.lower.z = cast(s16) min(cast(s32) goal_bounds.lower.z, nearest_cell_index.z);
+                        goal_bounds.upper.x = cast(s16) max(cast(s32) goal_bounds.upper.x, nearest_cell_index.x);
+                        goal_bounds.upper.y = cast(s16) max(cast(s32) goal_bounds.upper.y, nearest_cell_index.y);
+                        goal_bounds.upper.z = cast(s16) max(cast(s32) goal_bounds.upper.z, nearest_cell_index.z);
+                    }
+                }
             }
 
             if thread == 0 {

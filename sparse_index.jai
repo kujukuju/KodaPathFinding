@@ -163,9 +163,9 @@ contains :: (aabb: SparseAABB, point: SparseIndex) -> bool {
     inside := point.x >= aabb.lower.x;
     inside = inside && point.y >= aabb.lower.y;
     inside = inside && point.z >= aabb.lower.z;
-    inside = inside && point.x <= aabb.lower.x;
-    inside = inside && point.y <= aabb.lower.y;
-    inside = inside && point.z <= aabb.lower.z;
+    inside = inside && point.x <= aabb.upper.x;
+    inside = inside && point.y <= aabb.upper.y;
+    inside = inside && point.z <= aabb.upper.z;
     return inside;
 }
 
