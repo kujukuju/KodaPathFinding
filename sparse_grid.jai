@@ -95,6 +95,21 @@ initialize :: (sparse: *SparseGrid($T), grid_size_x: int, grid_size_y: int, grid
     sparse.cell_size = cell_size;
 }
 
+sparse_free :: (sparse: *SparseGrid) {
+    deinit(*sparse.grids);
+}
+
+sparse_copy :: (sparse: *SparseGrid($T)) -> SparseGrid(T) {
+    result := create_sparse_grid(T, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
+
+    for grid, grid_index: sparse.grids {
+        copied_grid := array_copy(grid);
+        set_grid(*result, grid_index, copied_grid);
+    }
+
+    return result;
+}
+
 #if sparse_table {
     for_expansion :: (sparse: *SparseGrid($T), body: Code, flags: For_Flags) #expand {
         #assert(!(flags & .REVERSE));
@@ -632,6 +647,17 @@ get_cell_position :: (sparse: SparseGrid($T), cell_index: SparseIndex) -> Vector
         set_grid(sparse, index, grid);
         return grid;
     }
+}
+
+get_memory_size :: (sparse: SparseGrid($T)) -> grid_size: int {
+    grid_size := 0;
+
+    for cell, cell_index: sparse.grids {
+        grid_size += cell.count * size_of(type_of(cell));
+        grid_size += size_of(type_of(cell_index));
+    }
+
+    return grid_size;
 }
 
 #scope_module

@@ -9,6 +9,10 @@ JumpData :: struct (JumpDataType: Type) {
     forced_neighbors: [3] [3] ForcedOffsets;
 }
 
+GoalBounds :: struct {
+    bounds: [26] SparseAABB;
+}
+
 // JumpEntry :: struct (T: Type) {
 //     data: T;
 //     distances: [offsets.count] s8;
@@ -122,13 +126,13 @@ travel_offsets :: [3] [3] ForcedOffsets.[
 // }
 
 set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
-    entry: JumpData(T);
+    entry: EXTREMELY_DUMB_BUG;
     entry.type = type;
     set_cell(sparse, point, entry);
 }
 
 set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
-    entry: JumpData(T);
+    entry: EXTREMELY_DUMB_BUG;
     entry.type = type;
     set_cell(sparse, cell_index, entry);
 }
@@ -156,18 +160,6 @@ get_nearest_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), line: Line3, vali
     nearest_cell.z = clamp(nearest_cell.z, cell_boundaries[0].z, cell_boundaries[1].z);
 
     return nearest_cell, true;
-}
-
-get_memory_size :: (sparse: SparseGrid($T)) -> grid_size: int, groups_size: int {
-    grid_size := 0;
-    groups_size := 0;
-
-    for cell, cell_index: sparse.grids {
-        grid_size += cell.count * size_of(type_of(cell));
-        grid_size += size_of(type_of(cell_index));
-    }
-
-    return grid_size, groups_size;
 }
 
 #scope_file

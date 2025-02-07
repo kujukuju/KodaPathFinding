@@ -5,6 +5,23 @@ SparseIndex :: struct {
     z: s32;
 }
 
+SparseAABB :: struct {
+    lower: SparseBounds;
+    upper: SparseBounds;
+}
+
+SparseBounds :: struct {
+    x: s16;
+    y: s16;
+    z: s16;
+}
+
+SparseDir :: struct {
+    x: s8;
+    y: s8;
+    z: s8;
+}
+
 operator == :: (a: SparseIndex, b: SparseIndex) -> bool {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
@@ -64,12 +81,6 @@ operator * :: (a: SparseIndex, b: SparseDir) -> SparseIndex #symmetric {
 //     r.z = a.z * b.z;
 //     return r;
 // }
-
-SparseDir :: struct {
-    x: s8;
-    y: s8;
-    z: s8;
-}
 
 operator == :: (a: SparseDir, b: SparseDir) -> bool {
     return a.x == b.x && a.y == b.y && a.z == b.z;
@@ -148,32 +159,42 @@ sparse_equals :: inline (a: SparseIndex, b: SparseIndex) -> bool {
     return a == b;
 }
 
+contains :: (aabb: SparseAABB, point: SparseIndex) -> bool {
+    inside := point.x >= aabb.lower.x;
+    inside = inside && point.y >= aabb.lower.y;
+    inside = inside && point.z >= aabb.lower.z;
+    inside = inside && point.x <= aabb.lower.x;
+    inside = inside && point.y <= aabb.lower.y;
+    inside = inside && point.z <= aabb.lower.z;
+    return inside;
+}
+
 // #run {
 //     a1 := SparseIndex.{-2, 2, 3};
 //     print("%: %\n", a1, unpack(pack(a1)));
 // };
 
-pack :: (index: SparseIndex) -> u64 {
-    index_x := cast(u64) (cast,no_check(u16) (cast(s16) index.x));
-    index_y := cast(u64) (cast,no_check(u16) (cast(s16) index.y));
-    index_z := cast(u64) (cast,no_check(u16) (cast(s16) index.z));
+// pack :: (index: SparseIndex) -> u64 {
+//     index_x := cast(u64) (cast,no_check(u16) (cast(s16) index.x));
+//     index_y := cast(u64) (cast,no_check(u16) (cast(s16) index.y));
+//     index_z := cast(u64) (cast,no_check(u16) (cast(s16) index.z));
 
-    result: u64;
-    result |= index_x << 32;
-    result |= index_y << 16;
-    result |= index_z;
+//     result: u64;
+//     result |= index_x << 32;
+//     result |= index_y << 16;
+//     result |= index_z;
 
-    return result;
-}
+//     return result;
+// }
 
-unpack :: (index: u64) -> SparseIndex {
-    index_x := (index >> 32) & 0xffff;
-    index_y := (index >> 16) & 0xffff;
-    index_z := index & 0xffff;
+// unpack :: (index: u64) -> SparseIndex {
+//     index_x := (index >> 32) & 0xffff;
+//     index_y := (index >> 16) & 0xffff;
+//     index_z := index & 0xffff;
 
-    result: SparseIndex;
-    result.x = cast,no_check(s16) index_x;
-    result.y = cast,no_check(s16) index_y;
-    result.z = cast,no_check(s16) index_z;
-    return result;
-}
+//     result: SparseIndex;
+//     result.x = cast,no_check(s16) index_x;
+//     result.y = cast,no_check(s16) index_y;
+//     result.z = cast,no_check(s16) index_z;
+//     return result;
+// }

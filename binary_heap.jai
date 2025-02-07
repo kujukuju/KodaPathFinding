@@ -5,6 +5,7 @@ BinaryHeap :: struct (T: Type, heuristic: (T) -> $R) {
 }
 
 reserve :: (heap: *BinaryHeap($T, $heuristic), count: s32) {
+    if !heap.allocator.proc then remember_allocators(heap);
     array_reserve(*heap.entries, count,, heap.allocator);
 }
 
@@ -38,7 +39,8 @@ sift_down :: (heap: *BinaryHeap($T, $heuristic), index: s32) {
 }
 
 insert :: (heap: *BinaryHeap($T, $heuristic), value: T) {
-    maybe_grow(*heap.entries,, heap.allocator);
+    if !heap.allocator.proc then remember_allocators(heap);
+    maybe_grow(xx *heap.entries, size_of(T),, heap.allocator);
 
     heap.entries.count += 1;
     heap.entries[heap.entries.count - 1] = value;
@@ -66,7 +68,11 @@ peek_min :: (heap: *BinaryHeap($T, $heuristic)) -> T, bool {
         return .{}, false;
     }
 
-    return heap.entries[0];
+    return heap.entries[0], true;
+}
+
+reset :: (heap: *BinaryHeap) {
+    heap.entries.count = 0;
 }
 
 is_empty :: (heap: BinaryHeap) -> bool {

@@ -140,7 +140,7 @@ visualize_checks: int = 10000000;
 performance_test :: false;
 visualize :: false;
 
-path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_point: Vector3, target_point: Vector3, wall_type: T) -> NavPath {
+path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T) -> NavPath {
     source_cell := get_cell_index(sparse.*, source_point);
     target_cell := get_cell_index(sparse.*, target_point);
 
@@ -150,7 +150,7 @@ path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_point: Vector3, targ
 open_queue_front_count := 0;
 open_queue_back_count := 0;
 
-path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: T) -> NavPath {
+path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: $T) -> NavPath {
     log_reset();
     defer log_print();
 
@@ -306,6 +306,9 @@ path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_cell: SparseIndex, t
     }
 
     push_open_entry(*open_queue, *fast_stack, start_entry);
+
+    // TODO TODO TODO TODO you're always jumping in straight lines so instead of using
+    // grid heuristic you can just lookup into a distance table and multiple by cell count
 
     while fast_stack.count > 0 || open_queue.entries.count > 0 {
         defer check_count += 1;
@@ -493,7 +496,7 @@ is_empty :: (cell_type: $T, wall_type: T) -> bool {
 // a negative value ist he distance to the next wall
 // a positive value is the distance to the next jump
 // a 0 value isn't possible outside of a wall
-get_jump_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir, end_cell: SparseIndex) -> s32 {
+get_jump_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir, end_cell: SparseIndex) -> s32 {
     log("get_jump_distance");
     potential_jump_distance := get_jump_distance_without_end(sparse, cell, direction);
     end_jump_point, end_jump_point_distance := get_end_jump_point_distance(sparse, cell, direction, potential_jump_distance, end_cell);
@@ -501,7 +504,7 @@ get_jump_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, dire
     return ifx end_jump_point then end_jump_point_distance else potential_jump_distance;
 }
 
-get_jump_distance_without_end :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> s32 {
+get_jump_distance_without_end :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> s32 {
     log("get_jump_distance_without_end");
     distance := get_step_distance(sparse, cell, direction);
     acc_distance := min(cast(s32) distance, S8_MAX - 1);
@@ -520,16 +523,16 @@ get_jump_distance_without_end :: (sparse: *SparseGrid(JumpData($T)), cell: Spars
     return acc_distance;
 }
 
-get_step_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> s8 {
+get_step_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> s8 {
     step_distances := get_cell(sparse, cell).distances;
 
     offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
     return step_distances[offset_index];
 }
 
-get_end_jump_point_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
     log("get_end_jump_point_distance");
-    get_end_jump_point_line :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_line :: (sparse: *SparseGrid(A), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 1);
 
         // if jump_distance is positive, a jump point, we can return false if it's equal because it's already a jump point and we will visit it
@@ -542,7 +545,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseI
         return end_point_distance >= 0 && fastabs(jump_distance) > end_point_distance, end_point_distance;
     }
 
-    get_end_jump_point_diagonal :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_diagonal :: (sparse: *SparseGrid(A), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 2);
 
         // I could be wrong about this
@@ -612,7 +615,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseI
         return false, 0;
     }
 
-    get_end_jump_point_corner :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_corner :: (sparse: *SparseGrid(A), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 3);
 
         end_point_delta := (end_cell - cell) * direction;
@@ -762,7 +765,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseI
     return false, 0;
 }
 
-get_forced_neighbors :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> ForcedOffsets {
+get_forced_neighbors :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> ForcedOffsets {
     forced_neighbors := get_cell(sparse, cell).forced_neighbors;
 
     return forced_neighbors[0][direction.x + 1] | forced_neighbors[1][direction.y + 1] | forced_neighbors[2][direction.z + 1];

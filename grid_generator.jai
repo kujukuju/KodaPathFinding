@@ -88,15 +88,207 @@ bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     bake_distances(sparse, line_indices, wall_type);
     bake_distances(sparse, diagonal_indices, wall_type);
     bake_distances(sparse, corner_indices, wall_type);
-    bake_goal_bounds(sparse);
 }
 
-bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG)) {
+bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
+    // in jump point search (and what should happen in a* search) is that you can't cut diagonally through
+    // cells that have filled neighbors. conceptually your path finding size is 1 block
+    // for jps all that means is we will respect your jump distance values
+
     #import "System";
+    #import "JaiParallel";
 
-    core_count := get_number_of_processors();
+    core_count := get_number_of_processors() / 2;
+    print("Using % cores.\n", core_count);
 
+    // we're going to allow 1 nearest direction per cell only
+    // because it will greatly (I think) reduce the size of the goal bounds per direction
+    // making the algorithm faster, and I dont't think the algorithm cares to choose between
+    // two directions with the same heuristic... both are fine
 
+    NearestDirection :: struct {
+        distance: float;
+        best_direction_index: u8;
+    }
+
+    SearchEntry :: struct {
+        cell_index: SparseIndex;
+        direction_index: u8;
+        current_distance: float;
+    }
+
+    GoalBoundsRequest :: struct {
+        sparse: SparseGrid(EXTREMELY_DUMB_BUG);
+        check_cells: [..] SparseIndex;
+        cell_goal_bounds: [..] GoalBounds;
+        nearest_directions: SparseGrid(NearestDirection);
+        search_queue: BinaryHeap(SearchEntry, (a: SearchEntry) -> float {
+            return a.current_distance;
+        });
+    }
+
+    requests := NewArray(core_count, GoalBoundsRequest);
+    non_wall_cell_count := 0;
+    for cell, cell_index: sparse {
+        if cell.type != wall_type {
+            non_wall_cell_count += 1;
+        }
+    }
+
+    print("Total cell count is %.\n", non_wall_cell_count);
+
+    for *goal_bounds_request: requests {
+        remaining_requests := requests.count - it_index;
+        cell_count := non_wall_cell_count / remaining_requests;
+        non_wall_cell_count -= cell_count;
+
+        print("Request % has % cells.\n", it_index, cell_count);
+
+        goal_bounds_request.sparse = sparse_copy(sparse);
+        array_resize(*goal_bounds_request.check_cells, cell_count);
+        array_resize(*goal_bounds_request.cell_goal_bounds, cell_count);
+        goal_bounds_request.nearest_directions = create_sparse_grid(NearestDirection, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
+        reserve(*goal_bounds_request.search_queue, 1024);
+    }
+
+    defer {
+        for *goal_bounds_request: requests {
+            sparse_free(*goal_bounds_request.sparse);
+            array_free(goal_bounds_request.check_cells);
+            array_free(goal_bounds_request.cell_goal_bounds);
+            sparse_free(*goal_bounds_request.nearest_directions);
+            destroy(goal_bounds_request.search_queue);
+        }
+        array_free(requests);
+    }
+
+    request_index := 0;
+    request_cell_index := 0;
+    for cell, cell_index: sparse {
+        if cell.type == wall_type {
+            continue;
+        }
+
+        requests[request_index].check_cells[request_cell_index] = cell_index;
+
+        request_cell_index = (request_cell_index + 1) % requests[request_index].check_cells.count;
+        if request_cell_index == 0 {
+            request_index += 1;
+        }
+    }
+
+    parallel_for(0, requests.count, (i: int, thread: int, using data: struct {
+        requests: [] GoalBoundsRequest;
+    }) {
+        request := *requests[i];
+        sparse := *request.sparse;
+
+        offset_distances :: float.[
+            1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0,
+            1.414214, 1.414214, 1.414214, 1.414214,
+            1.414214, 1.414214, 1.414214, 1.414214,
+            1.414214, 1.414214, 1.414214, 1.414214,
+            1.732051, 1.732051, 1.732051, 1.732051,
+            1.732051, 1.732051, 1.732051, 1.732051,
+        ];
+
+        for cell_index, check_cell_index: request.check_cells {
+            // reset the nearest directions to every cell, go through and find all nearest directions
+            sparse_grid_reset(*request.nearest_directions);
+            reset(*request.search_queue);
+
+            // we go through every cell and build the bounds of all of the 26 or something directions
+            for offset, offset_index: offsets {
+                jump_distance := get_step_distance(sparse, cell_index, offset);
+                assert(jump_distance != 0, "I think jump distance can't ever be 0 unless you're in a wall.\n");
+
+                // a jump distance of -1 means the very next cell is a wall so we don't check it
+                if jump_distance != -1 {
+                    insert(*request.search_queue, SearchEntry.{
+                        cell_index + offset,
+                        cast(u8) offset_index,
+                        offset_distances[offset_index],
+                    });
+
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].lower.x = cast(s16) min(cell_index.x, cell_index.x + offset.x);
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].lower.y = cast(s16) min(cell_index.y, cell_index.y + offset.y);
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].lower.z = cast(s16) min(cell_index.z, cell_index.z + offset.z);
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].upper.x = cast(s16) max(cell_index.x, cell_index.x + offset.x);
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].upper.y = cast(s16) max(cell_index.y, cell_index.y + offset.y);
+                    request.cell_goal_bounds[check_cell_index].bounds[offset_index].upper.z = cast(s16) max(cell_index.z, cell_index.z + offset.z);
+                }
+            }
+
+            while !is_empty(request.search_queue) {
+                search_entry := pop_min(*request.search_queue);
+                if !is_empty(request.search_queue) {
+                    next_search_entry := peek_min(*request.search_queue);
+                    assert(search_entry.current_distance <= next_search_entry.current_distance, "Did not pop the next best search entry.\n");
+                }
+
+                nearest_direction := get_or_add_cell_pointer(*request.nearest_directions, search_entry.cell_index);
+                if nearest_direction.distance == 0 || nearest_direction.distance > search_entry.current_distance {
+                    nearest_direction.distance = search_entry.current_distance;
+                    nearest_direction.best_direction_index = search_entry.direction_index;
+
+                    // if this is at least currently the best cell for this guy, we will continue in this direction
+                    for offset, offset_index: offsets {
+                        jump_distance := get_step_distance(sparse, search_entry.cell_index, offset);
+                        assert(jump_distance != 0, "I think jump distance can't ever be 0 unless you're in a wall.\n");
+
+                        // a jump distance of -1 means the very next cell is a wall so we don't check it
+                        if jump_distance != -1 {
+                            next_cell_index := search_entry.cell_index + offset;
+                            next_distance := search_entry.current_distance + offset_distances[offset_index];
+
+                            next_direction, next_direction_found := get_cell(*request.nearest_directions, next_cell_index);
+                            if next_direction_found && next_direction.distance != 0 && next_direction.distance <= next_distance {
+                                continue;
+                            }
+
+                            insert(*request.search_queue, SearchEntry.{
+                                next_cell_index,
+                                search_entry.direction_index,
+                                next_distance,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // at this point we've marked every reachable cell we can find as belonging to some nearest direction
+            // so we can go and construct all of the goal bounds
+            for nearest_cell, nearest_cell_index: request.nearest_directions {
+                offset_index := nearest_cell.best_direction_index;
+
+                goal_bounds := *request.cell_goal_bounds[check_cell_index].bounds[offset_index];
+
+                goal_bounds.lower.x = cast(s16) min(cast(s32) goal_bounds.lower.x, nearest_cell_index.x);
+                goal_bounds.lower.y = cast(s16) min(cast(s32) goal_bounds.lower.y, nearest_cell_index.y);
+                goal_bounds.lower.z = cast(s16) min(cast(s32) goal_bounds.lower.z, nearest_cell_index.z);
+                goal_bounds.upper.x = cast(s16) max(cast(s32) goal_bounds.upper.x, nearest_cell_index.x);
+                goal_bounds.upper.y = cast(s16) max(cast(s32) goal_bounds.upper.y, nearest_cell_index.y);
+                goal_bounds.upper.z = cast(s16) max(cast(s32) goal_bounds.upper.z, nearest_cell_index.z);
+            }
+
+            if thread == 0 {
+                print("Finished approximately %1%% of goal bounds generation. Done with %2/%3.\n", ((check_cell_index * 10000) / request.check_cells.count) / 100.0, check_cell_index, request.check_cells.count);
+            }
+        }
+    }, .{
+        requests,
+    }, requests.count);
+
+    for request: requests {
+        for cell_index: request.check_cells {
+            goal_bounds := request.cell_goal_bounds[it_index];
+            cell_pointer := get_cell_pointer(sparse, cell_index);
+            assert(!!cell_pointer, "Sparse cell for goal bounds doesn't exist.\n");
+
+            cell_pointer.goal_bounds = goal_bounds;
+        }
+    }
 }
 
 bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
@@ -113,20 +305,20 @@ bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $
 }
 
 // TODO if I do *SparseGrid(JumpData(T)) it doesn't work
-begin_nav_grid :: (generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), start: Vector3) {
-    // using internals;
+begin_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), start: Vector3) {
+    using internals;
 
-    // assert(ground_type != empty_type, "Invalid grid generator ground type.\n");
-    // assert(air_type != empty_type, "Invalid grid generator air type.\n");
+    assert(ground_type != empty_type, "Invalid grid generator ground type.\n");
+    assert(air_type != empty_type, "Invalid grid generator air type.\n");
 
-    // internals = .{};
+    internals = .{};
 
-    // cell_index := get_cell_index(sparse, start);
+    cell_index := get_cell_index(sparse, start);
 
-    // array_add(*move_queue, GridMove.{
-    //     cell_index,
-    //     cell_index,
-    // });
+    array_add(*move_queue, GridMove.{
+        cell_index,
+        cell_index,
+    });
 }
 
 // TODO this is gonna have to change later
