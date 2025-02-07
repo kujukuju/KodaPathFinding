@@ -1,14 +1,19 @@
 
-JumpSparseGrid :: struct (T: Type) {
-    using grid: SparseGrid(JumpEntry(T));
-    // groups: Table(u16, [..] SparseIndex);
-}
+// JumpSparseGrid :: struct (T: Type) {
+//     using grid: SparseGrid(JumpEntry(T));
+// }
 
-JumpEntry :: struct (T: Type) {
-    data: T;
+JumpData :: struct (JumpDataType: Type) {
+    type: JumpDataType;
     distances: [offsets.count] s8;
     forced_neighbors: [3] [3] ForcedOffsets;
 }
+
+// JumpEntry :: struct (T: Type) {
+//     data: T;
+//     distances: [offsets.count] s8;
+//     forced_neighbors: [3] [3] ForcedOffsets;
+// }
 
 // this is implying that 1 maps to index 0
 ForcedOffsets :: enum_flags u32 {
@@ -74,66 +79,66 @@ travel_offsets :: [3] [3] ForcedOffsets.[
 // write the actual path finding algorithm and make it visual in the game
 // then go through and generate the sparse groups every time you add a new cell
 
-create_grouped_sparse_grid :: ($T: Type, grid_size_x: int, grid_size_y: int, grid_size_z: int, cell_size: float) -> JumpSparseGrid(T) {
-    jump: JumpSparseGrid(T);
-    jump.grid = create_sparse_grid(JumpEntry(T), grid_size_x, grid_size_y, grid_size_z, cell_size);
+// create_grouped_sparse_grid :: ($T: Type, grid_size_x: int, grid_size_y: int, grid_size_z: int, cell_size: float) -> JumpSparseGrid(T) {
+//     jump: JumpSparseGrid(T);
+//     jump.grid = create_sparse_grid(JumpEntry(T), grid_size_x, grid_size_y, grid_size_z, cell_size);
 
-    return jump;
-}
+//     return jump;
+// }
 
-for_expansion :: (sparse: JumpSparseGrid($T), body: Code, flags: For_Flags) #expand {
-    #assert(!(flags & .REVERSE));
+// for_expansion :: (sparse: SparseGrid($T), body: Code, flags: For_Flags) #expand {
+//     #assert(!(flags & .REVERSE));
 
-    #if flags & .POINTER {
-        for *cell, cell_index: sparse.grid {
-            `it := cell.data;
-            `it_index := cell_index;
-            #insert body;
-        }
-    } else {
-        for cell, cell_index: sparse.grid {
-            `it := cell.data;
-            `it_index := cell_index;
-            #insert body;
-        }
-    }
-}
+//     #if flags & .POINTER {
+//         for *cell, cell_index: sparse.grid {
+//             `it := cell.data;
+//             `it_index := cell_index;
+//             #insert body;
+//         }
+//     } else {
+//         for cell, cell_index: sparse.grid {
+//             `it := cell.data;
+//             `it_index := cell_index;
+//             #insert body;
+//         }
+//     }
+// }
 
-get_cell :: (sparse: *JumpSparseGrid($T), point: Vector3) -> T, bool {
-    entry, found := get_cell(*sparse.grid, point);
-    return entry.data, found;
-}
-
-// *CachedGrid(JumpEntry(T)) doesn't work... try again in a future version
-// get_cell :: (sparse: *JumpSparseGrid($T), cell_index: SparseIndex, cached_grid: *CachedGrid(JumpEntry(T))) -> T, bool {
-// get_cell :: (sparse: *JumpSparseGrid($T), cell_index: SparseIndex, cached_grid: *$D) -> T, bool {
-//     entry, found := get_cell(*sparse.grid, cell_index, cached_grid);
+// get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
+//     entry, found := get_cell(sparse, point);
 //     return entry.data, found;
 // }
 
-get_cell :: (sparse: *JumpSparseGrid($T), cell_index: SparseIndex) -> T, bool {
-    entry, found := get_cell(*sparse.grid, cell_index);
-    return entry.data, found;
+// *CachedGrid(JumpEntry(T)) doesn't work... try again in a future version
+// get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex, cached_grid: *CachedGrid(JumpEntry(T))) -> T, bool {
+// get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex, cached_grid: *$D) -> T, bool {
+//     entry, found := get_cell(sparse, cell_index, cached_grid);
+//     return entry.data, found;
+// }
+
+// get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
+//     entry, found := get_cell(sparse, cell_index);
+//     return entry.data, found;
+// }
+
+set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
+    entry: JumpData(T);
+    entry.type = type;
+    set_cell(sparse, point, entry);
 }
 
-set_cell :: (sparse: *JumpSparseGrid($T), point: Vector3, data: T) {
-    entry: JumpEntry(T);
-    entry.data = data;
-    set_cell(*sparse.grid, point, entry);
+set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
+    entry: JumpData(T);
+    entry.type = type;
+    set_cell(sparse, cell_index, entry);
 }
 
-set_cell :: (sparse: *JumpSparseGrid($T), cell_index: SparseIndex, data: T) {
-    entry: JumpEntry(T);
-    entry.data = data;
-    set_cell(*sparse.grid, cell_index, entry);
-}
-
-get_nearest_cell :: (sparse: *JumpSparseGrid($T), line: Line3, valid: T) -> SparseIndex, bool {
+get_nearest_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), line: Line3, valid: $T) -> SparseIndex, bool #modify {return (cast(*Type_Info) T).type == .ENUM;} {
     nearest_cell: SparseIndex;
     found_nearest_cell: bool;
 
-    for cell, cell_index: get_cells_from_line(*sparse.grid, line) {
-        if cell.data == valid || cell.data & valid {
+    for cell, cell_index: get_cells_from_line(sparse, line) {
+        if cell.type == valid || cell.type & valid {
             nearest_cell = cell_index;
             found_nearest_cell = true;
             break;
@@ -144,7 +149,7 @@ get_nearest_cell :: (sparse: *JumpSparseGrid($T), line: Line3, valid: T) -> Spar
         return .{}, false;
     }
 
-    cell_boundaries := get_cell_boundaries(*sparse.grid);
+    cell_boundaries := get_cell_boundaries(sparse);
 
     nearest_cell.x = clamp(nearest_cell.x, cell_boundaries[0].x, cell_boundaries[1].x);
     nearest_cell.y = clamp(nearest_cell.y, cell_boundaries[0].y, cell_boundaries[1].y);
@@ -153,18 +158,18 @@ get_nearest_cell :: (sparse: *JumpSparseGrid($T), line: Line3, valid: T) -> Spar
     return nearest_cell, true;
 }
 
-get_memory_size :: (sparse: JumpSparseGrid($T)) -> grid_size: int, groups_size: int {
+get_memory_size :: (sparse: SparseGrid($T)) -> grid_size: int, groups_size: int {
     grid_size := 0;
     groups_size := 0;
 
-    for cell, cell_index: sparse.grid {
+    for cell, cell_index: sparse.grids {
         grid_size += cell.count * size_of(type_of(cell));
         grid_size += size_of(type_of(cell_index));
     }
-    for group, group_index: sparse.groups {
-        groups_size += group.count * size_of(type_of(group));
-        groups_size += size_of(type_of(group_index));
-    }
 
-    return grid_size, group_size;
+    return grid_size, groups_size;
 }
+
+#scope_file
+
+

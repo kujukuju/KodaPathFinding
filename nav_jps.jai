@@ -102,6 +102,7 @@
 // aabb direction nearest bounds
 // maybe need directional goal hints but thats kind of what the aabb thing is
 // need to optimize the actual grid so there's less vertical stuff going on
+// prune useless air cells that
 
 // optimizing
 // initial jps takes 2231 ms
@@ -139,9 +140,9 @@ visualize_checks: int = 10000000;
 performance_test :: false;
 visualize :: false;
 
-path_find_jps :: (sparse: *JumpSparseGrid($T), source_point: Vector3, target_point: Vector3, wall_type: T) -> NavPath {
-    source_cell := get_cell_index(*sparse.grid, source_point);
-    target_cell := get_cell_index(*sparse.grid, target_point);
+path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_point: Vector3, target_point: Vector3, wall_type: T) -> NavPath {
+    source_cell := get_cell_index(sparse.*, source_point);
+    target_cell := get_cell_index(sparse.*, target_point);
 
     return path_find_jps(sparse, source_cell, target_cell, wall_type);
 }
@@ -149,7 +150,7 @@ path_find_jps :: (sparse: *JumpSparseGrid($T), source_point: Vector3, target_poi
 open_queue_front_count := 0;
 open_queue_back_count := 0;
 
-path_find_jps :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: T) -> NavPath {
+path_find_jps :: (sparse: *SparseGrid(JumpData($T)), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: T) -> NavPath {
     log_reset();
     defer log_print();
 
@@ -194,26 +195,26 @@ path_find_jps :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, target_
     start_cell := source_cell;
     maximum_fall_cells :: 40;
     for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, start_cell) != .Empty {
+        if get_cell(sparse, start_cell).type != .Empty {
             break;
         }
 
         start_cell.y -= 1;
     }
-    if get_cell(sparse, start_cell) == .Empty {
+    if get_cell(sparse, start_cell).type == .Empty {
         print("No source ground found.\n");
         return .{};
     }
 
     end_cell := target_cell;
     for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, end_cell) != .Empty {
+        if get_cell(sparse, end_cell).type != .Empty {
             break;
         }
 
         end_cell.y -= 1;
     }
-    if get_cell(sparse, end_cell) == .Empty {
+    if get_cell(sparse, end_cell).type == .Empty {
         print("No target ground found.\n");
         return .{};
     }
@@ -403,218 +404,6 @@ path_find_jps :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, target_
     return .{};
 }
 
-find_path_a_star :: (sparse: *JumpSparseGrid($T), source_point: Vector3, target_point: Vector3) -> NavPath {
-    source_cell := get_cell_index(*sparse.grid, source_point);
-    target_cell := get_cell_index(*sparse.grid, target_point);
-
-    return find_path_a_star(sparse, source_cell, target_cell);
-}
-
-find_path_a_star :: (sparse: *JumpSparseGrid($T), source_cell: SparseIndex, target_cell: SparseIndex) -> NavPath {
-    seconds_since_init :: () -> float64 {
-        // this is like twice as fast as current_time_monotonic
-        return to_float64_seconds(current_time_consensus());
-    }
-
-    SearchEntry :: struct {
-        cell: SparseIndex;
-        cell_distance: float;
-        heuristic_distance: float;
-    }
-
-    sorted_insert :: (array: *LinkedArray(SearchEntry), entry: SearchEntry) {
-        linked_insert_sorted(array, entry, (a: SearchEntry, b: SearchEntry) -> float {
-            return b.heuristic_distance - a.heuristic_distance;
-        });
-    }
-
-    #if logging then start := seconds_since_init();
-
-    search_points.count = 0;
-
-    ground_source_cell := source_cell;
-    maximum_fall_cells :: 40;
-    for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, ground_source_cell) != .Empty {
-            break;
-        }
-
-        ground_source_cell.y -= 1;
-    }
-    if get_cell(sparse, ground_source_cell) == .Empty {
-        print("No source ground found.\n");
-        return .{};
-    }
-
-    ground_target_cell := target_cell;
-    for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, ground_target_cell) != .Empty {
-            break;
-        }
-
-        ground_target_cell.y -= 1;
-    }
-    if get_cell(sparse, ground_target_cell) == .Empty {
-        print("No target ground found.\n");
-        return .{};
-    }
-
-    SparseVisited :: struct {
-        visited_heuristic: float;
-        parent_index: SparseIndex;
-    }
-
-    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
-    visited.allocator = temp;
-
-    search_queue: LinkedArray(SearchEntry);
-    search_queue.allocator = temp;
-    linked_reserve(*search_queue, 1024);
-
-    sorted_insert(*search_queue, SearchEntry.{
-        ground_source_cell,
-        0,
-        grid_heuristic(ground_source_cell, ground_target_cell),
-    });
-
-    set_cell(*visited, ground_source_cell, SparseVisited.{
-        grid_heuristic(ground_source_cell, ground_target_cell),
-        ground_source_cell,
-    });
-
-    check_count := 0;
-
-    #if logging defer print("get_cell_time % ms\n", get_cell_time * 1000);
-    #if logging defer print("sorted_insert_time % ms\n", sorted_insert_time * 1000);
-    #if logging defer print("linked_pop_time % ms\n", linked_pop_time * 1000);
-    #if logging defer print("find_or_add_time % ms\n", find_or_add_time * 1000);
-    #if logging defer print("get_cell_position_time % ms\n", get_cell_position_time * 1000);
-    #if logging defer print("startup_time % ms\n", startup_time * 1000);
-
-    #if logging defer print("get_or_add_cell_pointer cache hit %\n", cache_hit);
-    #if logging defer print("get_or_add_cell_pointer cache miss %\n", cache_miss);
-
-    #if logging then startup_time += seconds_since_init() - start;
-    #if logging then start = 0;
-
-    offsets :: [3] s8.[
-        .[1, 0, 0], .[-1, 0, 0],
-        .[0, 1, 0], .[0, -1, 0],
-        .[0, 0, 1], .[0, 0, -1],
-        .[1, 0, 1], .[1, 0, -1], .[-1, 0, 1], .[-1, 0, -1],
-        .[1, 1, 0], .[1, -1, 0], .[-1, 1, 0], .[-1, -1, 0],
-        .[0, 1, 1], .[0, 1, -1], .[0, -1, 1], .[0, -1, -1],
-        .[1, 1, 1], .[1, 1, -1], .[1, -1, 1], .[1, -1, -1],
-        .[-1, 1, 1], .[-1, 1, -1], .[-1, -1, 1], .[-1, -1, -1],
-    ];
-
-    l1 :: 1.0;
-    l2 :: 1.414214;
-    l3 :: 1.732051;
-    weights :: float.[
-        l1, l1,
-        l1, l1,
-        l1, l1,
-        l2, l2, l2, l2,
-        l2, l2, l2, l2,
-        l2, l2, l2, l2,
-        l3, l3, l3, l3,
-        l3, l3, l3, l3,
-    ];
-
-    while search_queue.count > 0 {
-        defer check_count += 1;
-
-        #if logging then start = seconds_since_init();
-        search_entry := linked_pop(*search_queue);
-        #if logging then linked_pop_time += seconds_since_init() - start;
-        #if logging then start = 0;
-
-        if search_entry.cell == ground_target_cell {
-            #if logging then start = seconds_since_init();
-            #if logging then defer print("Path lookup time % ms\n", (seconds_since_init() - start) * 1000);
-
-            path: NavPath;
-            array_add(*path.path, search_entry.cell);
-
-            parent_cell := get_cell(*visited, search_entry.cell);
-            has_parent_cell := parent_cell.visited_heuristic > 0;
-            has_parent_cell = has_parent_cell && search_entry.cell != parent_cell.parent_index;
-
-            while has_parent_cell {
-                array_add(*path.path, parent_cell.parent_index);
-
-                next_parent_cell := get_cell(*visited, parent_cell.parent_index);
-                has_parent_cell = next_parent_cell.visited_heuristic > 0;
-                has_parent_cell = has_parent_cell && next_parent_cell.parent_index != parent_cell.parent_index;
-                parent_cell = next_parent_cell;
-            }
-
-            print("Finished with % left in queue after checking % entries.\n", search_queue.count, check_count);
-
-            reverse(path.path);
-            return path;
-        }
-
-        for offset: offsets {
-            offset_x := offset[0];
-            offset_y := offset[1];
-            offset_z := offset[2];
-
-            cell_index := SparseIndex.{search_entry.cell.x + offset_x, search_entry.cell.y + offset_y, search_entry.cell.z + offset_z};
-            if get_cell(sparse, cell_index) != .Ground {
-                continue;
-            }
-
-            parent_cell_distance := weights[it_index];
-            distance_heuristic := search_entry.cell_distance + parent_cell_distance + grid_heuristic(cell_index, ground_target_cell);
-
-            #if logging then start = seconds_since_init();
-            parent_cell := get_or_add_cell_pointer(*visited, cell_index);
-            #if logging then find_or_add_time += seconds_since_init() - start;
-            #if logging then start = 0;
-            if parent_cell.visited_heuristic == 0 || distance_heuristic < parent_cell.visited_heuristic - 0.01 {
-                #if !performance_test then array_add(*search_points, SearchPoint.{
-                    cell_index,
-                    distance_heuristic,
-                });
-
-                // set the parent lookup if you are adding a new entry
-                parent_cell.* = SparseVisited.{
-                    distance_heuristic,
-                    search_entry.cell,
-                };
-
-                #if logging then start = seconds_since_init();
-                // if get_cell(sparse, cell_index) == .Ground {
-                    #if logging then if start {
-                        get_cell_time += seconds_since_init() - start;
-                        start = 0;
-                    }
-                    #if logging then start = seconds_since_init();
-                    #if logging then get_cell_position_time += seconds_since_init() - start;
-                    #if logging then start = 0;
-
-                    #if logging then start = seconds_since_init();
-                    sorted_insert(*search_queue, SearchEntry.{
-                        cell_index,
-                        search_entry.cell_distance + parent_cell_distance,
-                        distance_heuristic,
-                    });
-                    #if logging then sorted_insert_time += seconds_since_init() - start;
-                    #if logging then start = 0;
-                // }
-                #if logging then if start {
-                    get_cell_time += seconds_since_init() - start;
-                    start = 0;
-                }
-            }
-        }
-    }
-
-    return .{};
-}
-
 grid_heuristic :: (a: SparseIndex, b: SparseIndex) -> float {
     log("grid_heuristic");
 
@@ -704,7 +493,7 @@ is_empty :: (cell_type: $T, wall_type: T) -> bool {
 // a negative value ist he distance to the next wall
 // a positive value is the distance to the next jump
 // a 0 value isn't possible outside of a wall
-get_jump_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir, end_cell: SparseIndex) -> s32 {
+get_jump_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir, end_cell: SparseIndex) -> s32 {
     log("get_jump_distance");
     potential_jump_distance := get_jump_distance_without_end(sparse, cell, direction);
     end_jump_point, end_jump_point_distance := get_end_jump_point_distance(sparse, cell, direction, potential_jump_distance, end_cell);
@@ -712,7 +501,7 @@ get_jump_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction:
     return ifx end_jump_point then end_jump_point_distance else potential_jump_distance;
 }
 
-get_jump_distance_without_end :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir) -> s32 {
+get_jump_distance_without_end :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> s32 {
     log("get_jump_distance_without_end");
     distance := get_step_distance(sparse, cell, direction);
     acc_distance := min(cast(s32) distance, S8_MAX - 1);
@@ -731,16 +520,16 @@ get_jump_distance_without_end :: (sparse: *JumpSparseGrid($T), cell: SparseIndex
     return acc_distance;
 }
 
-get_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir) -> s8 {
-    step_distances := get_cell(*sparse.grid, cell).distances;
+get_step_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> s8 {
+    step_distances := get_cell(sparse, cell).distances;
 
     offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
     return step_distances[offset_index];
 }
 
-get_end_jump_point_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+get_end_jump_point_distance :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
     log("get_end_jump_point_distance");
-    get_end_jump_point_line :: (sparse: *JumpSparseGrid(T), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_line :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 1);
 
         // if jump_distance is positive, a jump point, we can return false if it's equal because it's already a jump point and we will visit it
@@ -753,7 +542,7 @@ get_end_jump_point_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, 
         return end_point_distance >= 0 && fastabs(jump_distance) > end_point_distance, end_point_distance;
     }
 
-    get_end_jump_point_diagonal :: (sparse: *JumpSparseGrid(T), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_diagonal :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 2);
 
         // I could be wrong about this
@@ -823,7 +612,7 @@ get_end_jump_point_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, 
         return false, 0;
     }
 
-    get_end_jump_point_corner :: (sparse: *JumpSparseGrid(T), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
+    get_end_jump_point_corner :: (sparse: *SparseGrid(JumpData(T)), cell: SparseIndex, direction: SparseDir, jump_distance: s32, end_cell: SparseIndex) -> bool, s32 {
         assert(fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z) == 3);
 
         end_point_delta := (end_cell - cell) * direction;
@@ -973,8 +762,8 @@ get_end_jump_point_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, 
     return false, 0;
 }
 
-get_forced_neighbors :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir) -> ForcedOffsets {
-    forced_neighbors := get_cell(*sparse.grid, cell).forced_neighbors;
+get_forced_neighbors :: (sparse: *SparseGrid(JumpData($T)), cell: SparseIndex, direction: SparseDir) -> ForcedOffsets {
+    forced_neighbors := get_cell(sparse, cell).forced_neighbors;
 
     return forced_neighbors[0][direction.x + 1] | forced_neighbors[1][direction.y + 1] | forced_neighbors[2][direction.z + 1];
 }

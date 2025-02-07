@@ -1,29 +1,32 @@
 
-GridGenerator :: struct (T: Type, D: Type) {
+GridGenerator :: struct (GridGeneratorType: Type, GridGeneratorData: Type) {
     character_step_size: float;
-    get_character_position: #type (data: D) -> Vector3;
-    get_character_velocity: #type (data: D) -> Vector3;
-    set_character_position: #type (position: Vector3, data: D);
-    set_character_velocity: #type (velocity: Vector3, data: D);
-    update_physics: #type (delta_time: float, data: D);
-    is_character_on_ground: #type (data: D) -> bool;
+    get_character_position: #type (data: GridGeneratorData) -> Vector3;
+    get_character_velocity: #type (data: GridGeneratorData) -> Vector3;
+    set_character_position: #type (position: Vector3, data: GridGeneratorData);
+    set_character_velocity: #type (velocity: Vector3, data: GridGeneratorData);
+    update_physics: #type (delta_time: float, data: GridGeneratorData);
+    is_character_on_ground: #type (data: GridGeneratorData) -> bool;
     grid_cell_added_callback: #type (grid_index: SparseIndex, cell_index: SparseIndex);
     gravity_direction: Vector3;
     // delta time of an update tick in seconds
     delta_time: float;
-    empty_type: T;
-    ground_type: T;
+    empty_type: GridGeneratorType;
+    ground_type: GridGeneratorType;
+    air_type: GridGeneratorType;
     aabb: AABB3;
-    data: D;
+    data: GridGeneratorData;
     internals: struct {
         setting_position: bool;
         moving: bool;
+        move_stopping: bool;
         current_iteration_count: int;
         current_fall_count: int;
         body_last_position: Vector3;
-        moving_cells: [..] SparseIndex;
+        last_ground: bool;
+        moving_cells: [..] HistoryCell;
         move_queue: [..] GridMove;
-        line_cells_buffer: [..] SparseIndex;
+        line_cells_buffer: [..] HistoryCell;
         visited_ground: Table(SparseIndex, bool, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
     };
 }
@@ -31,6 +34,13 @@ GridGenerator :: struct (T: Type, D: Type) {
 GridMove :: struct {
     from: SparseIndex;
     to: SparseIndex;
+}
+
+HistoryCell :: struct {
+    cell: SparseIndex;
+    // this is a cell you moved to
+    // so if it's not ground, then it's air
+    ground: bool;
 }
 
 // plans
@@ -53,15 +63,16 @@ destroy :: (grid_generator: *GridGenerator) {
     deinit(*grid_generator.internals.visited_ground);
 }
 
-bake_distances :: (sparse: *JumpSparseGrid($T), wall_type: T) {
-    bake_distances :: (sparse: *JumpSparseGrid(T), indices: [] u8, wall_type: T) {
+// TODO if I do *SparseGrid(JumpData(T)) it doesn't work
+bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
+    bake_distances :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), indices: [] u8, wall_type: T) {
         for grid, grid_index: sparse.grids {
             for *cell, cell_index: grid {
-                if cell.data == wall_type {
+                if cell.type == wall_type {
                     continue;
                 }
 
-                cell_sparse_index := get_cell_index(sparse.grid, grid_index, cell_index);
+                cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
                 for index: indices {
                     direction := offsets[index];
                     cell.distances[index] = calculate_step_distance(sparse, cell_sparse_index, direction, wall_type);
@@ -77,32 +88,45 @@ bake_distances :: (sparse: *JumpSparseGrid($T), wall_type: T) {
     bake_distances(sparse, line_indices, wall_type);
     bake_distances(sparse, diagonal_indices, wall_type);
     bake_distances(sparse, corner_indices, wall_type);
+    bake_goal_bounds(sparse);
 }
 
-bake_forced_neighbors :: (sparse: *JumpSparseGrid($T), wall_type: T) {
+bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG)) {
+    #import "System";
+
+    core_count := get_number_of_processors();
+
+
+}
+
+bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     for grid, grid_index: sparse.grids {
         for *cell, cell_index: grid {
-            if cell.data == wall_type {
+            if cell.type == wall_type {
                 continue;
             }
 
-            cell_sparse_index := get_cell_index(sparse.grid, grid_index, cell_index);
+            cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
             cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type);
         }
     }
 }
 
-begin_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSparseGrid(T), start: Vector3) {
-    using internals;
+// TODO if I do *SparseGrid(JumpData(T)) it doesn't work
+begin_nav_grid :: (generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), start: Vector3) {
+    // using internals;
 
-    internals = .{};
+    // assert(ground_type != empty_type, "Invalid grid generator ground type.\n");
+    // assert(air_type != empty_type, "Invalid grid generator air type.\n");
 
-    cell_index := get_cell_index(sparse.grid, start);
+    // internals = .{};
 
-    array_add(*move_queue, GridMove.{
-        cell_index,
-        cell_index,
-    });
+    // cell_index := get_cell_index(sparse, start);
+
+    // array_add(*move_queue, GridMove.{
+    //     cell_index,
+    //     cell_index,
+    // });
 }
 
 // TODO this is gonna have to change later
@@ -110,7 +134,8 @@ begin_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSparseG
 // because the algorithm can only move in cardinal directions against walls
 // so the connection corners that need to be added are dependent on a real path existing.....
 
-iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSparseGrid(T)) -> done: bool {
+// TODO if I do *SparseGrid(JumpData(T)) it doesn't work
+iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG)) -> done: bool {
     using internals;
 
     if move_queue.count == 0 {
@@ -121,6 +146,7 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
     if table_contains(*visited_ground, grid_move.to) {
         setting_position = false;
         moving = false;
+        move_stopping = false;
         current_iteration_count = 0;
         current_fall_count = 0;
 
@@ -143,9 +169,10 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         }
     }
 
-    if current_iteration_count > 20 || current_fall_count > 120 || !contains(aabb, get_cell_position(sparse.grid, grid_move.from)) {
+    if current_iteration_count > 120 || current_fall_count > 120 || !contains(aabb, get_cell_position(sparse.*, grid_move.from)) {
         setting_position = false;
         moving = false;
+        move_stopping = false;
         current_iteration_count = 0;
         current_fall_count = 0;
 
@@ -158,16 +185,14 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         // we're updating our position to the desired start cell
         setting_position = true;
         moving = false;
+        move_stopping = false;
         current_iteration_count = 0;
         current_fall_count = 0;
 
-        set_character_position(get_cell_position(sparse.grid, grid_move.from), data);
+        set_character_position(get_cell_position(sparse.*, grid_move.from), data);
         update_physics(delta_time, data);
 
         body_last_position = get_character_position(data);
-
-        moving_cells.count = 0;
-        array_add(*moving_cells, grid_move.from);
 
         return false;
     } else if setting_position {
@@ -181,21 +206,25 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         update_physics(delta_time, data);
         position := get_character_position(data);
 
-        position_cell := get_cell_index(sparse.grid, position);
-        if moving_cells[moving_cells.count - 1] != position_cell {
-            array_add(*moving_cells, position_cell);
-        }
-
         delta_position := position - body_last_position;
         body_last_position = position;
 
         stopped_moving := length(delta_position) < 0.0001;
 
-        if stopped_moving {
+        if stopped_moving && is_character_on_ground(data) {
             setting_position = false;
             moving = true;
             current_iteration_count = 0;
             current_fall_count = 0;
+
+            position_cell := get_cell_index(sparse.*, position);
+            last_ground = true;
+
+            moving_cells.count = 0;
+            array_add(*moving_cells, HistoryCell.{
+                position_cell,
+                true,
+            });
         }
 
         return false;
@@ -204,16 +233,22 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
         // in the xz plane only, and if we make it there we did it
         velocity := get_character_velocity(data);
 
-        position := get_character_position(data);
-        remaining_delta := get_cell_position(sparse.grid, grid_move.to) - position;
-        remaining_delta_xz := Vector3.{remaining_delta.x, 0, remaining_delta.z};
-        if length(remaining_delta_xz) < character_step_size + 0.00001 {
-            velocity.x = remaining_delta.x;
-            velocity.z = remaining_delta.z;
+        if move_stopping {
+            velocity.x = 0;
+            velocity.z = 0;
         } else {
-            remaining_delta_xz = normalize(remaining_delta_xz) * character_step_size;
-            velocity.x = remaining_delta_xz.x;
-            velocity.z = remaining_delta_xz.z;
+            position := get_character_position(data);
+            remaining_delta := get_cell_position(sparse.*, grid_move.to) - position;
+            remaining_delta_xz := Vector3.{remaining_delta.x, 0, remaining_delta.z};
+            if length(remaining_delta_xz) < character_step_size + 0.00001 {
+                velocity.x = remaining_delta.x;
+                velocity.z = remaining_delta.z;
+                move_stopping = true;
+            } else {
+                remaining_delta_xz = normalize(remaining_delta_xz) * character_step_size;
+                velocity.x = remaining_delta_xz.x;
+                velocity.z = remaining_delta_xz.z;
+            }
         }
 
         velocity.x /= delta_time;
@@ -221,22 +256,33 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
 
         set_character_velocity(velocity, data);
         update_physics(delta_time, data);
-        position = get_character_position(data);
+        position := get_character_position(data);
 
-        position_cell := get_cell_index(sparse.grid, position);
-        if moving_cells[moving_cells.count - 1] != position_cell {
-            array_add(*moving_cells, position_cell);
+        // TODO there should maybe be some logic of like you're only on the ground if you've been on the ground for 2 ticks
+        on_ground := is_character_on_ground(data);
+        next_last_ground := on_ground;
+        defer last_ground = next_last_ground;
+        on_ground = on_ground && last_ground;
+
+        position_cell := get_cell_index(sparse.*, position);
+        if moving_cells[moving_cells.count - 1].cell != position_cell {
+            array_add(*moving_cells, HistoryCell.{
+                position_cell,
+                on_ground,
+            });
+        } else {
+            moving_cells[moving_cells.count - 1].ground = moving_cells[moving_cells.count - 1].ground || on_ground;
         }
 
         delta_position := position - body_last_position;
         body_last_position = position;
 
-        on_ground := is_character_on_ground(data);
         stopped_moving := length(delta_position) < 0.01;
 
         if stopped_moving {
             setting_position = false;
             moving = false;
+            move_stopping = false;
             current_iteration_count = 0;
             current_fall_count = 0;
 
@@ -244,31 +290,34 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
 
             // delta_first_cell := position_cell - grid_move.to;
             if on_ground { // && delta_first_cell.x == 0 && delta_first_cell.z == 0 /*&& abs(delta_first_cell.y) <= 1*/ {
-                if table_contains(*visited_ground, position_cell) {
-                    return false;
-                }
-
                 line_cells_buffer.count = 0;
                 get_line(moving_cells, *line_cells_buffer);
 
                 for line_cell: line_cells_buffer {
                     // we don't count line cells as visited for the same logic of
                     // why we won't continue the iteration of these cells mid air
-                    mark_ground(generator, sparse, line_cell);
+                    if line_cell.ground {
+                        mark_ground(generator, sparse, line_cell.cell);
+                    } else if get_cell(sparse, line_cell.cell).type == empty_type {
+                        // we only want to set air on cells that are not ground, so empty
+                        mark_air(generator, sparse, line_cell.cell);
+                    }
+                }
+
+                if !table_contains(*visited_ground, position_cell) {
+                    next_offsets :: SparseIndex.[.{1, 0, 0}, .{-1, 0, 0}, .{0, 0, 1}, .{0, 0, -1}];
+                    for next_offset: next_offsets {
+                        next_cell := position_cell + next_offset;
+                        if !table_contains(*visited_ground, next_cell) {
+                            array_add(*move_queue, GridMove.{
+                                position_cell,
+                                next_cell,
+                            });
+                        }
+                    }
                 }
 
                 table_set(*visited_ground, position_cell, true);
-
-                next_offsets :: SparseIndex.[.{1, 0, 0}, .{-1, 0, 0}, .{0, 0, 1}, .{0, 0, -1}];
-                for next_offset: next_offsets {
-                    next_cell := position_cell + next_offset;
-                    if !table_contains(*visited_ground, next_cell) {
-                        array_add(*move_queue, GridMove.{
-                            position_cell,
-                            next_cell,
-                        });
-                    }
-                }
             }
         }
 
@@ -281,24 +330,30 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D), sparse: *JumpSpars
 
 // TODO this method actually needs to look up its neighbors positions and try pretty hard to align
 // itself, vertically with gravity, with its neighbors so that the actual jps algorithm can be fast
-mark_ground :: (using generator: *GridGenerator($T, $D), sparse: *JumpSparseGrid(T), cell_index: SparseIndex) {
+mark_ground :: (using generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex) {
     set_cell(sparse, cell_index, ground_type);
 
-    if grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse.grid, cell_index), cell_index);
+    if grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse, cell_index), cell_index);
+}
+
+mark_air :: (using generator: *GridGenerator($T, $D), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex) {
+    set_cell(sparse, cell_index, air_type);
+
+    if grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse, cell_index), cell_index);
 }
 
 #scope_file
 
 // you have to calculate step distances line -> diagonal -> corner
 // so we can assume when you're calling calculate on a diagonal every single cell has it's line value completed
-calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> s8 {
+calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> s8 {
     // im going to do this such that positive numbers are forced neighbor distances
     // negative numbers are wall distances
     // and S8_MAX is a forced neighbor continuation indicator
 
     // TODO apparently this function doesn't need to return wall
-    calculate_jump_point :: (sparse: *JumpSparseGrid(T), jump_cell: JumpEntry(T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
-        calculate_jump_point_line :: (sparse: *JumpSparseGrid(T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
+    calculate_jump_point :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), jump_cell: EXTREMELY_DUMB_BUG, cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
+        calculate_jump_point_line :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
             assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 1, "Line jump point check must have 1 component.\n");
 
             // the first cell you check CAN be a forced neighbor jump point
@@ -313,7 +368,7 @@ calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, dire
             while true {
                 current_cell += direction;
 
-                if is_wall(get_cell(sparse, current_cell), wall_type) {
+                if is_wall(get_cell(sparse, current_cell).type, wall_type) {
                     return false;
                 }
 
@@ -325,7 +380,7 @@ calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, dire
             return false;
         }
 
-        calculate_jump_point_diagonal :: (sparse: *JumpSparseGrid(T), jump_cell: JumpEntry(T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
+        calculate_jump_point_diagonal :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), jump_cell: EXTREMELY_DUMB_BUG, cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
             assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 2, "Diagonal jump point check must have 2 components.\n");
 
             line_directions: [2] SparseDir = ---;
@@ -354,7 +409,7 @@ calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, dire
             return jump_point;
         }
 
-        calculate_jump_point_corner :: (sparse: *JumpSparseGrid(T), jump_cell: JumpEntry(T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
+        calculate_jump_point_corner :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), jump_cell: EXTREMELY_DUMB_BUG, cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
             assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 3, "Corner jump point check must have 3 components.\n");
 
             diagonal_directions := SparseDir.[
@@ -398,8 +453,8 @@ calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, dire
     for i: cast(s8) 1..S8_MAX - 1 {
         check_cell := cell + direction * i;
 
-        jump_cell := get_cell(*sparse.grid, check_cell);
-        if is_wall(jump_cell.data, wall_type) {
+        jump_cell := get_cell(sparse, check_cell);
+        if is_wall(jump_cell.type, wall_type) {
             return -i;
         }
 
@@ -421,7 +476,7 @@ calculate_step_distance :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, dire
     return S8_MAX;
 }
 
-calculate_forced_neighbors :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, wall_type: T) -> [3] [3] ForcedOffsets {
+calculate_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, wall_type: $T) -> [3] [3] ForcedOffsets {
     neighbors: [3] [3] ForcedOffsets;
     neighbors[0][0] = calculate_forced_neighbor(sparse, cell, .{-1, 0, 0}, wall_type);
     neighbors[0][1] = .None;
@@ -435,7 +490,7 @@ calculate_forced_neighbors :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, w
     return neighbors;
 }
 
-calculate_forced_neighbor :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, direction: SparseDir, wall_type: T) -> ForcedOffsets, bool {
+calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> ForcedOffsets, bool {
     assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 1, "You can only check for forced neighbors of a line.\n");
 
     // we assume in this function the cell you're checking must be empty
@@ -482,8 +537,8 @@ calculate_forced_neighbor :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, di
 
     for empty_cell_direction: empty_cell_directions {
         forced_cell_offsets[it_index] = get_forced_offset(empty_cell_direction) | get_forced_offset(empty_cell_direction + direction);
-        jump_point_empty_cells[it_index] = get_cell(sparse, cell + empty_cell_direction);
-        jump_point_wall_cells[it_index] = get_cell(sparse, cell + empty_cell_direction - direction);
+        jump_point_empty_cells[it_index] = get_cell(sparse, cell + empty_cell_direction).type;
+        jump_point_wall_cells[it_index] = get_cell(sparse, cell + empty_cell_direction - direction).type;
     }
 
     // actual corner, adjacent cell, adjacent cell
@@ -523,13 +578,14 @@ calculate_forced_neighbor :: (sparse: *JumpSparseGrid($T), cell: SparseIndex, di
     return forced_offsets, !!forced_offsets;
 }
 
-get_line :: (points: [] SparseIndex, result: *[..] SparseIndex) {
+get_line :: (points: [] HistoryCell, result: *[..] HistoryCell) {
     for i: 0..points.count - 2 {
         start_result_index := result.count;
         get_line(points[i], points[i + 1], result);
 
         if start_result_index > 0 {
-            if result.*[start_result_index] == result.*[start_result_index - 1] {
+            if result.*[start_result_index].cell == result.*[start_result_index - 1].cell {
+                result.*[start_result_index - 1].ground = result.*[start_result_index - 1].ground || result.*[start_result_index].ground;
                 array_ordered_remove_by_index(result, start_result_index);
             }
         }
@@ -537,13 +593,27 @@ get_line :: (points: [] SparseIndex, result: *[..] SparseIndex) {
 }
 
 // TODO I could add in a floating point delta value that I could use to decide which direction the line moves in for the next iteration
-get_line :: (p1: SparseIndex, p2: SparseIndex, result: *[..] SparseIndex) {
-    current := p1;
+get_line :: (p1: HistoryCell, p2: HistoryCell, result: *[..] HistoryCell) {
+    current := p1.cell;
 
-    array_add(result, current);
+    if p1.cell == p2.cell {
+        array_add(result, HistoryCell.{
+            p1.cell,
+            p1.ground && p2.ground,
+        });
 
-    while current != p2 {
-        pdelta := p2 - current;
+        return;
+    }
+
+    array_add(result, HistoryCell.{
+        current,
+        p1.ground,
+    });
+
+    intermediary_ground := p1.ground && p2.ground;
+
+    while current != p2.cell {
+        pdelta := p2.cell - current;
 
         if abs(pdelta.x) >= abs(pdelta.y) && abs(pdelta.x) >= abs(pdelta.z) {
             current += SparseIndex.{pdelta.x, 0, 0};
@@ -553,7 +623,12 @@ get_line :: (p1: SparseIndex, p2: SparseIndex, result: *[..] SparseIndex) {
             current += SparseIndex.{0, 0, pdelta.z};
         }
 
-        array_add(result, current);
+        array_add(result, HistoryCell.{
+            current,
+            intermediary_ground,
+        });
     }
+
+    result.*[result.count - 1].ground = p2.ground;
 }
 

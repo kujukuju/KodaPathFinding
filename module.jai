@@ -2,7 +2,8 @@
 #load "binary_heap.jai";
 #load "grid_generator.jai";
 #load "jump_sparse_grid.jai";
-#load "nav.jai";
+#load "nav_astar.jai";
+#load "nav_jps.jai";
 #load "sparse_grid.jai";
 #load "sparse_index.jai";
 

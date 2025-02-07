@@ -2,13 +2,13 @@
 sparse_table :: true;
 cached_grid :: true;
 
-SparseGrid :: struct (T: Type) {
+SparseGrid :: struct (SparseGridType: Type) {
 #if sparse_table {
-    grids: Table(SparseIndex, [] T, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
+    grids: Table(SparseIndex, [] SparseGridType, given_hash_function = sparse_hash, given_compare_function = sparse_equals);
 } else {
     grids: [..] [] T;
 }
-    cached_grid: CachedGrid(T);
+    cached_grid: CachedGrid(SparseGridType);
 #if !sparse_table {
     grid_min: SparseIndex;
     grid_max: SparseIndex;
@@ -83,12 +83,16 @@ deserialize_grid :: (serialized: SerializableSparseGrid($T)) -> SparseGrid(T) {
 
 create_sparse_grid :: ($T: Type, grid_size_x: int, grid_size_y: int, grid_size_z: int, cell_size: float) -> SparseGrid(T) {
     sparse: SparseGrid(T);
+    initialize(*sparse, grid_size_x, grid_size_y, grid_size_z, cell_size);
+
+    return sparse;
+}
+
+initialize :: (sparse: *SparseGrid($T), grid_size_x: int, grid_size_y: int, grid_size_z: int, cell_size: float) {
     sparse.grid_size.x = cast(s32) grid_size_x;
     sparse.grid_size.y = cast(s32) grid_size_y;
     sparse.grid_size.z = cast(s32) grid_size_z;
     sparse.cell_size = cell_size;
-
-    return sparse;
 }
 
 #if sparse_table {
@@ -633,7 +637,7 @@ get_cell_position :: (sparse: SparseGrid($T), cell_index: SparseIndex) -> Vector
 #scope_module
 
 plane_intersection :: (ray: Ray3, plane: Plane3) -> float {
-    return (plane.d - dot(plane.n, ray.p)) / dot(plane.n, ray.dir);
+    return (plane.d - dot(plane.normal, ray.p)) / dot(plane.normal, ray.dir);
 }
 
 ray_aabb_front_intersection :: (ray: Ray3, aabb: AABB3) -> Vector3 {
@@ -648,7 +652,7 @@ ray_aabb_front_intersection :: (ray: Ray3, aabb: AABB3) -> Vector3 {
     planes[5] = create_plane3(aabb.lower, .{0, 0, -1});
 
     for plane: planes {
-        if dot(ray.dir, plane.n) < 0 {
+        if dot(ray.dir, plane.normal) < 0 {
             ray_t := plane_intersection(ray, plane);
             if ray_t > max_t {
                 max_t = ray_t;
@@ -673,7 +677,7 @@ ray_aabb_back_intersection :: (ray: Ray3, aabb: AABB3, max_t: float = FLOAT32_MA
     planes[5] = create_plane3(aabb.lower, .{0, 0, -1});
 
     for plane: planes {
-        if dot(ray.dir, plane.n) > 0 {
+        if dot(ray.dir, plane.normal) > 0 {
             ray_t := plane_intersection(ray, plane);
             if ray_t > 0 && ray_t < min_t {
                 min_t = ray_t;
@@ -697,11 +701,11 @@ ray_aabb_direction :: (ray: Ray3, aabb: AABB3) -> Vector3, s8, s8, s8 {
     planes[5] = create_plane3(aabb.lower, .{0, 0, -1});
 
     for plane: planes {
-        if dot(ray.dir, plane.n) > 0 {
+        if dot(ray.dir, plane.normal) > 0 {
             ray_t := plane_intersection(ray, plane);
             if ray_t > 0 && ray_t < min_t {
                 min_t = ray_t;
-                min_normal = plane.n;
+                min_normal = plane.normal;
             }
         }
     }
