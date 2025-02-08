@@ -247,7 +247,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         start_cell,
         0,
         grid_heuristic(start_cell, end_cell),
-        get_bounded_offsets(sparse, start_cell, end_cell),
+        .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ, // get_bounded_offsets(sparse, start_cell, end_cell),
     };
 
     print("starting offset is %\n", start_entry.forced_offsets);
