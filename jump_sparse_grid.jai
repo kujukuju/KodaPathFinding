@@ -125,19 +125,34 @@ travel_offsets :: [3] [3] ForcedOffsets.[
 //     return entry.data, found;
 // }
 
-set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
+is_jump_data :: (type: Type, other_type: Type) -> bool {
+    if (cast(*Type_Info) other_type).type != .ENUM return false;
+    info := cast(*Type_Info) type;
+    if info.type != .STRUCT return false;
+    struct_info := cast(*Type_Info_Struct) info;
+    for member: struct_info.members {
+        if member.type.type != .STRUCT continue;
+        member_struct_info := cast(*Type_Info_Struct) member.type;
+        if member_struct_info.name == "JumpData" {
+            return true;
+        }
+    }
+    return false;
+}
+
+set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
     entry: EXTREMELY_DUMB_BUG;
     entry.type = type;
     set_cell(sparse, point, entry);
 }
 
-set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, type: $T) #modify {return (cast(*Type_Info) T).type == .ENUM;} {
+set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, type: $T) #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
     entry: EXTREMELY_DUMB_BUG;
     entry.type = type;
     set_cell(sparse, cell_index, entry);
 }
 
-get_nearest_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), line: Line3, valid: $T) -> SparseIndex, bool #modify {return (cast(*Type_Info) T).type == .ENUM;} {
+get_nearest_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), line: Line3, valid: $T) -> SparseIndex, bool #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
     nearest_cell: SparseIndex;
     found_nearest_cell: bool;
 

@@ -247,7 +247,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         start_cell,
         0,
         grid_heuristic(start_cell, end_cell),
-        .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ, // get_bounded_offsets(sparse, start_cell, end_cell),
+        .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ,
     };
 
     print("starting offset is %\n", start_entry.forced_offsets);
@@ -538,7 +538,7 @@ get_jump_distance_without_end :: (sparse: *SparseGrid($A), cell: SparseIndex, di
         acc_distance += min(fastabs(distance), S8_MAX - 1);
 
         if distance < 0 {
-            acc_distance = -acc_distance;
+            return -acc_distance;
         }
     }
 
