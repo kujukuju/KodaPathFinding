@@ -94,17 +94,11 @@
 // add the
 
 // future optimizations
-// I can put the visited value inside the grid itself since I already have to get the cell each time I visit
-// you could just prepend the visited heuristic with a search counter, and every visited cell with the wrong search counter
-// is considered unvisited
 // need groups for cells, with a table of group counts that auto merges when groups join and auto split when groups split I guess
 // need to immediate exit paths that dont exist
 // aabb direction nearest bounds
 // maybe need directional goal hints but thats kind of what the aabb thing is
 // need to optimize the actual grid so there's less vertical stuff going on
-// prune useless air cells that
-// right now I'm allowing multiple aabbs to contain the same cells.... should I not and instead make the calculate cell goal boundary directions function
-// restricted to the actual jps movement rules?
 
 // optimizing
 // initial jps takes 2231 ms
@@ -116,8 +110,8 @@
 // same thing with hash table but without cached grid takes 16.5038 ms
 // changed some sparse grid code but still should be all the same, took 18.9117 ms
 
-// without goal bounds checking it took 6.05 ms unoptimized
-// with goal bounds checking
+// without goal bounds checking it took 5.8 ms unoptimized
+// with goal bounds checking it took 7.35 ms unoptimized
 
 NavPath :: struct {
     path: [..] SparseIndex;
@@ -142,7 +136,7 @@ wall_checks: [..] [2] SparseIndex;
 
 visualize_checks: int = 10000000;
 
-performance_test :: false;
+performance_test :: true;
 visualize :: false;
 
 path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T) -> NavPath {
@@ -151,9 +145,6 @@ path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: 
 
     return path_find_jps(sparse, source_cell, target_cell, wall_type);
 }
-
-open_queue_front_count := 0;
-open_queue_back_count := 0;
 
 path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: $T) -> NavPath {
     log_reset();
@@ -165,9 +156,13 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     jump_checks.count = 0;
     wall_checks.count = 0;
 
+    sparse.last_visited_search_index = (sparse.last_visited_search_index + 1) % U8_MAX;
+    visited_search_index := sparse.last_visited_search_index;
+
     ForcedEntry :: struct {
         cell: SparseIndex;
         parent: SparseIndex;
+        sparse_entry: *A;
         travelled_distance: float;
         heuristic_distance: float;
         forced_offsets: ForcedOffsets;
@@ -224,16 +219,6 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         return .{};
     }
 
-    // TODO in the jps algorithm because we only put entries into the grid once we've visited them
-    // and we never use this grid to avoid iterations like in a*, the visited bool can just be removed
-    SparseVisited :: struct {
-        visited_heuristic: float;
-        parent_cell: SparseIndex;
-    }
-
-    visited: SparseGrid(SparseVisited) = create_sparse_grid(SparseVisited, sparse.grid_size.x, sparse.grid_size.y, sparse.grid_size.z, sparse.cell_size);
-    visited.allocator = temp;
-
     heuristic :: (a: ForcedEntry) -> float {
         return a.heuristic_distance;
     }
@@ -245,12 +230,11 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     start_entry := ForcedEntry.{
         start_cell,
         start_cell,
+        get_cell_pointer(sparse, start_cell),
         0,
         grid_heuristic(start_cell, end_cell),
         .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ,
     };
-
-    print("starting offset is %\n", start_entry.forced_offsets);
 
     fast_stack: [..] ForcedEntry;
     fast_stack.allocator = temp;
@@ -258,25 +242,25 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
 
     fast_stack_heuristic := start_entry.heuristic_distance;
 
-    get_path :: (visited: *SparseGrid(SparseVisited), before_end_cell: SparseIndex, start_cell: SparseIndex, end_cell: SparseIndex) -> NavPath {
+    get_path :: (sparse: *SparseGrid(A), before_end_cell: SparseIndex, start_cell: SparseIndex, end_cell: SparseIndex, visited_search_index: u8) -> NavPath {
         log("get_path");
 
         path: NavPath;
         array_add(*path.path, end_cell);
         array_add(*path.path, before_end_cell);
 
-        parent_cell := get_cell(visited, before_end_cell);
-        has_parent_cell := parent_cell.visited_heuristic != 0;
+        parent_cell := get_cell(sparse, before_end_cell);
+        has_parent_cell := parent_cell.visited_search_index == visited_search_index;
 
         while has_parent_cell {
-            array_add(*path.path, parent_cell.parent_cell);
+            array_add(*path.path, parent_cell.visited_parent);
 
-            if parent_cell.parent_cell == start_cell {
+            if parent_cell.visited_parent == start_cell {
                 break;
             }
 
-            next_parent_cell := get_cell(visited, parent_cell.parent_cell);
-            has_parent_cell = next_parent_cell.visited_heuristic != 0;
+            next_parent_cell := get_cell(sparse, parent_cell.visited_parent);
+            has_parent_cell = next_parent_cell.visited_search_index == visited_search_index;
             parent_cell = next_parent_cell;
         }
 
@@ -288,15 +272,22 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     check_count := 0;
     open_queue_count := 0;
     fast_stack_count := 0;
-    open_queue_front_count = 0;
-    open_queue_back_count = 0;
 
     max_open_queue_count := 0;
     max_fast_stack_count := 0;
 
+    // valid_bounds_count = 0;
+    // invalid_bounds_count = 0;
+
+    visited_heuristic_skipped := 0;
+    visited_heuristic_visited := 0;
+
+    defer print("Skipped % cells from heuristic and visited %.\n", visited_heuristic_skipped, visited_heuristic_visited);
+
+    // defer print("Valid bounds checks were % and invalid bounds checks were %.\n", valid_bounds_count, invalid_bounds_count);
+
     defer print("Checked % entries with % open queue entries and % fast stack entries.\n", check_count, open_queue_count, fast_stack_count);
     defer print("Max open queue size was % and max fast stack size was %.\n", max_open_queue_count, max_fast_stack_count);
-    defer print("Inserted % into open queue back and % into open queue front.\n", open_queue_back_count, open_queue_front_count);
 
     push_open_entry :: (open_queue: *BinaryHeap(ForcedEntry, heuristic), fast_stack: *[..] ForcedEntry, entry: ForcedEntry) #expand {
         if entry.heuristic_distance <= `fast_stack_heuristic + 0.01 {
@@ -314,8 +305,15 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
 
     push_open_entry(*open_queue, *fast_stack, start_entry);
 
-    // TODO TODO TODO TODO you're always jumping in straight lines so instead of using
-    // grid heuristic you can just lookup into a distance table and multiple by cell count
+    offset_distances :: float.[
+        1.0, 1.0, 1.0,
+        1.0, 1.0, 1.0,
+        1.414214, 1.414214, 1.414214, 1.414214,
+        1.414214, 1.414214, 1.414214, 1.414214,
+        1.414214, 1.414214, 1.414214, 1.414214,
+        1.732051, 1.732051, 1.732051, 1.732051,
+        1.732051, 1.732051, 1.732051, 1.732051,
+    ];
 
     while fast_stack.count > 0 || open_queue.entries.count > 0 {
         defer check_count += 1;
@@ -333,47 +331,35 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
             fast_stack.count -= 1;
         } else {
             forced_entry = pop_min(*open_queue);
+            fast_stack_heuristic = forced_entry.heuristic_distance;
         }
-
-        fast_stack_heuristic = forced_entry.heuristic_distance;
 
         forced_cell := forced_entry.cell;
         parent_cell := forced_entry.parent;
+        sparse_entry := forced_entry.sparse_entry;
+
+        if sparse_entry.visited_search_index != visited_search_index {
+            visited_heuristic_visited += 1;
+            sparse_entry.visited_search_index = visited_search_index;
+            sparse_entry.visited_parent = parent_cell;
+        } else {
+            visited_heuristic_skipped += 1;
+            continue;
+        }
+
         travelled_distance := forced_entry.travelled_distance;
         forced_offsets := forced_entry.forced_offsets;
-        heuristic_distance := forced_entry.heuristic_distance;
-
-        visited_cell: *SparseVisited = ---;
-        {
-            log("get_visited_cell");
-            visited_cell = get_or_add_cell_pointer(*visited, forced_cell);
-
-            if visited_cell.visited_heuristic != 0 && heuristic_distance >= visited_cell.visited_heuristic - 0.01 {
-                continue;
-            }
-        }
 
         #if visualize {
             array_add(*jump_pairs, .[parent_cell, forced_cell]);
         }
 
-        {
-            log("set_visited_cell");
-            visited_cell.* = SparseVisited.{
-                heuristic_distance,
-                parent_cell,
-            };
-        }
-
+        // TODO try inverting this? after I add to visited earlier?
         for < offset: offsets {
-            offset_flag := 1 << it_index;
+            offset_flag := cast(ForcedOffsets) (1 << it_index);
 
-            if forced_offsets & cast(ForcedOffsets) offset_flag {
-                jump_distance: s32 = ---;
-                {
-                    jump_distance = get_jump_distance(sparse, forced_cell, offset, end_cell);
-                    assert(jump_distance != 0, "Jump distance can't be 0 it's not possible.\n");
-                }
+            if forced_offsets & offset_flag {
+                jump_distance := get_jump_distance(sparse, forced_cell, sparse_entry, offset, end_cell);
 
                 #if visualize {
                     if jump_distance > 0 {
@@ -386,27 +372,28 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                 if jump_distance > 0 {
                     jump_cell := forced_cell + offset * jump_distance;
                     if jump_cell == end_cell {
-                        return get_path(*visited, forced_cell, start_cell, end_cell);
+                        return get_path(sparse, forced_cell, start_cell, end_cell, visited_search_index);
                     }
 
-                    new_travelled_distance := travelled_distance + grid_heuristic(forced_cell, jump_cell);
+                    jump_entry := get_cell_pointer(sparse, jump_cell);
 
-                    new_forced_offsets: ForcedOffsets = ---;
-                    {
-                        log("get_forced_neighbors");
-                        new_forced_offsets = get_forced_neighbors(sparse, jump_cell, offset);
-                        // TODO change to use indices
-                        new_forced_offsets |= travel_offsets[offset.x + 1][offset.y + 1][offset.z + 1];
-                    }
+                    new_forced_offsets := get_forced_neighbors(sparse, jump_entry, offset);
+                    new_forced_offsets |= travel_offsets[offset.x + 1][offset.y + 1][offset.z + 1];
 
-                    new_forced_offsets &= get_bounded_offsets(sparse, jump_cell, end_cell);
+                    // if !end_jump {
+                    //     new_forced_offsets &= get_bounded_offsets(sparse, jump_cell, end_cell, new_forced_offsets);
+                    // }
 
                     if new_forced_offsets {
+                        new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index];
+                        new_visited_heuristic := new_travelled_distance + grid_heuristic(jump_cell, end_cell);
+
                         push_open_entry(*open_queue, *fast_stack, ForcedEntry.{
                             jump_cell,
                             forced_cell,
+                            jump_entry,
                             new_travelled_distance,
-                            new_travelled_distance + grid_heuristic(jump_cell, end_cell),
+                            new_visited_heuristic,
                             new_forced_offsets,
                         });
                     }
@@ -456,24 +443,6 @@ grid_heuristic :: (a: SparseIndex, b: SparseIndex) -> float {
     return (delta_max - delta_mid) * one_dim_length + (delta_mid - delta_min) * two_dim_length + delta_min * three_dim_length;
 }
 
-// #run {
-//     sorted_thing: [..] float;
-//     sorted_insert(*sorted_thing, 0.5, (a: float, b: float, data: int) -> float {
-//         return b - a;
-//     }, 0);
-//     sorted_insert(*sorted_thing, 1, (a: float, b: float, data: int) -> float {
-//         return b - a;
-//     }, 0);
-//     sorted_insert(*sorted_thing, 2, (a: float, b: float, data: int) -> float {
-//         return b - a;
-//     }, 0);
-//     sorted_insert(*sorted_thing, 1.5, (a: float, b: float, data: int) -> float {
-//         return b - a;
-//     }, 0);
-
-//     print("Sorted smallest to largest? %\n", sorted_thing);
-// };
-
 forced_offset_lookup :: [3] [3] ForcedOffsets.[
     .[
         .[.NXNYNZ, .NXNY, .NXNYPZ],
@@ -502,10 +471,14 @@ is_empty :: (cell_type: $T, wall_type: T) -> bool {
     return !is_wall(cell_type, wall_type);
 }
 
-get_bounded_offsets :: (sparse: *SparseGrid($A), cell: SparseIndex, end_cell: SparseIndex) -> ForcedOffsets {
+get_bounded_offsets :: (sparse: *SparseGrid($A), cell: SparseIndex, end_cell: SparseIndex, available_offsets: ForcedOffsets) -> ForcedOffsets {
     bounded_offsets: ForcedOffsets;
     goal_bounds := get_cell(sparse, cell).goal_bounds;
     for offset, offset_index: offsets {
+        if !(available_offsets & cast(ForcedOffsets) (1 << offset_index)) {
+            continue;
+        }
+
         if contains(goal_bounds.bounds[offset_index], end_cell) {
             bounded_offsets |= cast(ForcedOffsets) (1 << offset_index);
         }
@@ -513,17 +486,25 @@ get_bounded_offsets :: (sparse: *SparseGrid($A), cell: SparseIndex, end_cell: Sp
     return bounded_offsets;
 }
 
-// TODO after getting the jump distance you need to check if this jump goes past the end point in any
+// valid_bounds_count := 0;
+// invalid_bounds_count := 0;
+
+// is_bounded_offset :: (cell: $A, end_cell: SparseIndex, offset_index: int) -> bool {
+//     valid_bounds := contains(cell.goal_bounds.bounds[offset_index], end_cell);
+//     valid_bounds_count += ifx valid_bounds then 1 else 0;
+//     invalid_bounds_count += ifx valid_bounds then 0 else 1;
+//     return valid_bounds;
+// }
 
 // a negative value ist he distance to the next wall
 // a positive value is the distance to the next jump
 // a 0 value isn't possible outside of a wall
-get_jump_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir, end_cell: SparseIndex) -> s32 {
+get_jump_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, cell_entry: *A, direction: SparseDir, end_cell: SparseIndex) -> s32, end: bool {
     log("get_jump_distance");
-    potential_jump_distance := get_jump_distance_without_end(sparse, cell, direction);
+    potential_jump_distance := get_jump_distance_without_end(sparse, cell, cell_entry, direction);
     end_jump_point, end_jump_point_distance := get_end_jump_point_distance(sparse, cell, direction, potential_jump_distance, end_cell);
 
-    return ifx end_jump_point then end_jump_point_distance else potential_jump_distance;
+    return ifx end_jump_point then end_jump_point_distance else potential_jump_distance, end_jump_point;
 }
 
 get_jump_distance_without_end :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> s32 {
@@ -543,6 +524,32 @@ get_jump_distance_without_end :: (sparse: *SparseGrid($A), cell: SparseIndex, di
     }
 
     return acc_distance;
+}
+
+get_jump_distance_without_end :: (sparse: *SparseGrid($A), cell: SparseIndex, cell_entry: *A, direction: SparseDir) -> s32 {
+    log("get_jump_distance_without_end");
+    distance := get_step_distance(sparse, cell_entry, direction);
+    acc_distance := min(cast(s32) distance, S8_MAX - 1);
+
+    while distance == S8_MAX {
+        current_cell := cell + direction * acc_distance;
+
+        distance = get_step_distance(sparse, current_cell, direction);
+        acc_distance += min(fastabs(distance), S8_MAX - 1);
+
+        if distance < 0 {
+            return -acc_distance;
+        }
+    }
+
+    return acc_distance;
+}
+
+get_step_distance :: (sparse: *SparseGrid($A), cell_entry: *A, direction: SparseDir) -> s8 {
+    step_distances := cell_entry.distances;
+
+    offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
+    return step_distances[offset_index];
 }
 
 get_step_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> s8 {
@@ -629,7 +636,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             }
         }
@@ -645,33 +652,34 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
         end_point_distance := end_point_delta.x;
         if end_point_distance >= 0 && fastabs(jump_distance) > end_point_distance {
             new_cell := cell + direction * end_point_distance;
-            new_delta := end_cell - new_cell;
+            aligned_cell := bool.[end_cell.x == new_cell.x, end_cell.y == new_cell.y, end_cell.z == new_cell.z];
+            // new_delta := end_cell - new_cell;
 
-            if new_delta.x == 0 && new_delta.y == 0 && new_delta.z == 0 {
+            if aligned_cell[0] && aligned_cell[1] && aligned_cell[2] {
                 return true, end_point_distance;
-            } else if new_delta.x == 0 && new_delta.y == 0 {
+            } else if aligned_cell[0] && aligned_cell[1] {
                 new_direction := SparseDir.{0, 0, direction.z};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.x == 0 && new_delta.z == 0 {
+            } else if aligned_cell[0] && aligned_cell[2] {
                 new_direction := SparseDir.{0, direction.y, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.y == 0 && new_delta.z == 0 {
+            } else if aligned_cell[1] && aligned_cell[2] {
                 new_direction := SparseDir.{direction.x, 0, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             } else {
                 new_direction := SparseDir.{0, direction.y, direction.z};
@@ -679,7 +687,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
 
                 jump_point := get_end_jump_point_diagonal(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             }
         }
@@ -687,33 +695,34 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
         end_point_distance = end_point_delta.y;
         if end_point_distance >= 0 && fastabs(jump_distance) > end_point_distance {
             new_cell := cell + direction * end_point_distance;
-            new_delta := end_cell - new_cell;
+            aligned_cell := bool.[end_cell.x == new_cell.x, end_cell.y == new_cell.y, end_cell.z == new_cell.z];
+            // new_delta := end_cell - new_cell;
 
-            if new_delta.x == 0 && new_delta.y == 0 && new_delta.z == 0 {
+            if aligned_cell[0] && aligned_cell[1] && aligned_cell[2] {
                 return true, end_point_distance;
-            } else if new_delta.x == 0 && new_delta.y == 0 {
+            } else if aligned_cell[0] && aligned_cell[1] {
                 new_direction := SparseDir.{0, 0, direction.z};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.x == 0 && new_delta.z == 0 {
+            } else if aligned_cell[0] && aligned_cell[2] {
                 new_direction := SparseDir.{0, direction.y, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.y == 0 && new_delta.z == 0 {
+            } else if aligned_cell[1] && aligned_cell[2] {
                 new_direction := SparseDir.{direction.x, 0, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             } else {
                 new_direction := SparseDir.{direction.x, 0, direction.z};
@@ -721,7 +730,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
 
                 jump_point := get_end_jump_point_diagonal(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             }
         }
@@ -729,33 +738,34 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
         end_point_distance = end_point_delta.z;
         if end_point_distance >= 0 && fastabs(jump_distance) > end_point_distance {
             new_cell := cell + direction * end_point_distance;
-            new_delta := end_cell - new_cell;
+            aligned_cell := bool.[end_cell.x == new_cell.x, end_cell.y == new_cell.y, end_cell.z == new_cell.z];
+            // new_delta := end_cell - new_cell;
 
-            if new_delta.x == 0 && new_delta.y == 0 && new_delta.z == 0 {
+            if aligned_cell[0] && aligned_cell[1] && aligned_cell[2] {
                 return true, end_point_distance;
-            } else if new_delta.x == 0 && new_delta.y == 0 {
+            } else if aligned_cell[0] && aligned_cell[1] {
                 new_direction := SparseDir.{0, 0, direction.z};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.x == 0 && new_delta.z == 0 {
+            } else if aligned_cell[0] && aligned_cell[2] {
                 new_direction := SparseDir.{0, direction.y, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
-            } else if new_delta.y == 0 && new_delta.z == 0 {
+            } else if aligned_cell[1] && aligned_cell[2] {
                 new_direction := SparseDir.{direction.x, 0, 0};
                 new_jump_distance := get_jump_distance_without_end(sparse, new_cell, new_direction);
 
                 jump_point := get_end_jump_point_line(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             } else {
                 new_direction := SparseDir.{direction.x, direction.y, 0};
@@ -763,7 +773,7 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
 
                 jump_point := get_end_jump_point_diagonal(sparse, new_cell, new_direction, new_jump_distance, end_cell);
                 if jump_point {
-                    return jump_point, end_point_distance;
+                    return true, end_point_distance;
                 }
             }
         }
@@ -787,8 +797,9 @@ get_end_jump_point_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, dire
     return false, 0;
 }
 
-get_forced_neighbors :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> ForcedOffsets {
-    forced_neighbors := get_cell(sparse, cell).forced_neighbors;
+get_forced_neighbors :: (sparse: *SparseGrid($A), cell_entry: *A, direction: SparseDir) -> ForcedOffsets {
+    log("get_forced_neighbors");
+    forced_neighbors := cell_entry.forced_neighbors;
 
     return forced_neighbors[0][direction.x + 1] | forced_neighbors[1][direction.y + 1] | forced_neighbors[2][direction.z + 1];
 }

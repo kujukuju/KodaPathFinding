@@ -15,6 +15,7 @@ SparseGrid :: struct (SparseGridType: Type) {
 }
     grid_size: SparseIndex;
     cell_size: float;
+    last_visited_search_index: u8;
     allocator: Allocator;
 }
 
@@ -32,6 +33,11 @@ SerializableSparseGrid :: struct (T: Type) {
 CachedGrid :: struct (T: Type) {
     grid_index: SparseIndex = .{S32_MAX, S32_MAX, S32_MAX};
     grid: [] T;
+}
+
+VisitedData :: struct {
+    visited_search_index: u8;
+    visited_parent: SparseIndex;
 }
 
 #if sparse_table {
@@ -249,7 +255,7 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
     cell_index := get_cell_index(sparse, point);
     data, found := get_cell(sparse, cell_index);
     return data, found;
-}
+} @thread
 
 #if cached_grid {
     get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
@@ -276,7 +282,7 @@ get_cell :: (sparse: *SparseGrid($T), point: Vector3) -> T, bool {
         }
         empty: T;
         return empty, false;
-    }
+    } @thread
 }
 
 get_cell_pointer :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> *T, bool {

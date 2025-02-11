@@ -4,6 +4,7 @@
 #load "jump_sparse_grid.jai";
 #load "nav_astar.jai";
 #load "nav_jps.jai";
+#load "nav_setup.jai";
 #load "sparse_grid.jai";
 #load "sparse_index.jai";
 
