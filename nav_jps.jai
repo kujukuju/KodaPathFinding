@@ -136,7 +136,7 @@ wall_checks: [..] [2] SparseIndex;
 
 visualize_checks: int = 10000000;
 
-performance_test :: true;
+performance_test :: false;
 visualize :: false;
 
 path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T) -> NavPath {
@@ -550,7 +550,7 @@ get_step_distance :: (sparse: *SparseGrid($A), cell_entry: *A, direction: Sparse
 
     offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
     return step_distances[offset_index];
-}
+} @thread
 
 get_step_distance :: (sparse: *SparseGrid($A), cell: SparseIndex, direction: SparseDir) -> s8 {
     step_distances := get_cell(sparse, cell).distances;
