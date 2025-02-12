@@ -10,13 +10,28 @@
 
 #scope_module
 
-// #run {
-//     print("%: %\n", -500, fastabs(-500));
-//     print("fastmax(-500, -200) %\n", fastmax(-500, -200));
-//     print("fastmax(500, -200) %\n", fastmax(500, -200));
-//     print("fastmax(500, 200) %\n", fastmax(500, 200));
-//     print("fastmax(500, 500) %\n", fastmax(500, 500));
-// }
+is_using :: ($parent: Type, $child: Type) -> bool {
+    // this should bake the result into every uniquely polymorphic procedure at compile time but allow it to be called at runtime as far as I can figure
+    // which should be better for the compiler
+    result :: #run () -> bool {
+        parent_info := cast(*Type_Info_Struct) parent;
+        child_info := cast(*Type_Info) child;
+        if parent_info.type != .STRUCT {
+            return false;
+        }
+
+        for member: parent_info.members {
+            is_child := !!(member.flags & .USING);
+            is_child = is_child && member.type == child_info;
+            if is_child {
+                return true;
+            }
+        }
+
+        return false;
+    }();
+    return result;
+}
 
 fastabs :: inline (v: $T) -> T {
     mask_shift :: size_of(T) * 8 - 1;

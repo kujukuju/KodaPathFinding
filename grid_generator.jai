@@ -13,6 +13,9 @@ GridGenerator :: struct (GridGeneratorType: Type, GridGeneratorData: Type, BodyT
     destroy_body: #type (body: BodyType, data: GridGeneratorData);
     grid_cell_added_callback: #type (grid_index: SparseIndex, cell_index: SparseIndex);
     grid_cell_changed_callback: #type (grid_index: SparseIndex, cell_index: SparseIndex);
+    // these are additional types you want to bake in that don't affect the pathfinding, so not ground air or empty
+    get_cell_accent_type: #type (cell_index: SparseIndex, data: GridGeneratorData) -> GridGeneratorType;
+    get_cell_weight: #type (type: GridGeneratorType) -> u8;
     gravity_direction: Vector3;
     // delta time of an update tick in seconds
     delta_time: float;
@@ -96,7 +99,7 @@ destroy :: (grid_generator: *GridGenerator) {
 }
 
 // TODO if I do *SparseGrid(JumpData(T)) it doesn't work
-bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
+bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, $get_weight: (T) -> u8 = null) {
     bake_distances :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), indices: [] u8, wall_type: T) {
         for grid, grid_index: sparse.grids {
             for *cell, cell_index: grid {
@@ -107,7 +110,11 @@ bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
                 cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
                 for index: indices {
                     direction := offsets[index];
-                    cell.distances[index] = calculate_step_distance(sparse, cell_sparse_index, direction, wall_type);
+                    cell.distances[index] = calculate_step_distance(sparse, cell_sparse_index, direction, wall_type, get_weight);
+
+                    #if #run is_using(EXTREMELY_DUMB_BUG, WeightData) {
+                        cell.weights[index] = calculate_weight(sparse, cell_sparse_index, direction, get_weight);
+                    }
                 }
             }
         }
@@ -369,7 +376,7 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     }
 }
 
-bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
+bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, $get_weight: (T) -> u8 = null) {
     for grid, grid_index: sparse.grids {
         for *cell, cell_index: grid {
             if cell.type == wall_type {
@@ -377,7 +384,7 @@ bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $
             }
 
             cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
-            cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type);
+            cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type, get_weight);
         }
     }
 }
@@ -814,14 +821,22 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D, $B), sparse: *Spars
 // TODO this method actually needs to look up its neighbors positions and try pretty hard to align
 // itself, vertically with gravity, with its neighbors so that the actual jps algorithm can be fast
 mark_ground :: (using generator: *GridGenerator($T, $D, $B), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, changed: bool = false) {
-    set_cell(sparse, cell_index, ground_type);
+    cell_type := ground_type;
+    if get_cell_accent_type {
+        cell_type |= get_cell_accent_type(cell_index, data);
+    }
+    set_cell(sparse, cell_index, cell_type);
 
     if changed && grid_cell_changed_callback then grid_cell_changed_callback(get_grid_index(sparse, cell_index), cell_index);
     if !changed && grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse, cell_index), cell_index);
 }
 
 mark_air :: (using generator: *GridGenerator($T, $D, $B), sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, changed: bool = false) {
-    set_cell(sparse, cell_index, air_type);
+    cell_type := air_type;
+    if get_cell_accent_type {
+        cell_type |= get_cell_accent_type(cell_index, data);
+    }
+    set_cell(sparse, cell_index, cell_type);
 
     if changed && grid_cell_changed_callback then grid_cell_changed_callback(get_grid_index(sparse, cell_index), cell_index);
     if !changed && grid_cell_added_callback then grid_cell_added_callback(get_grid_index(sparse, cell_index), cell_index);
@@ -831,12 +846,14 @@ mark_air :: (using generator: *GridGenerator($T, $D, $B), sparse: *SparseGrid($E
 
 // you have to calculate step distances line -> diagonal -> corner
 // so we can assume when you're calling calculate on a diagonal every single cell has it's line value completed
-calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> s8 {
+calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T, $get_weight: (T) -> u8) -> s8 {
     // im going to do this such that positive numbers are forced neighbor distances
     // negative numbers are wall distances
     // and S8_MAX is a forced neighbor continuation indicator
 
-    // TODO apparently this function doesn't need to return wall
+    // the logic here is special in that if the current iteration direction hits a wall then it can't be a forced neighbor
+    // this doesn't sound special but it makes it so that you can't just simply recurse forward you actually have to step
+
     calculate_jump_point :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), jump_cell: EXTREMELY_DUMB_BUG, cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
         calculate_jump_point_line :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: T) -> jump: bool {
             assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 1, "Line jump point check must have 1 component.\n");
@@ -846,7 +863,7 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
 
             current_cell := cell;
 
-            if calculate_forced_neighbor(sparse, current_cell, direction, wall_type) {
+            if calculate_forced_neighbor(sparse, current_cell, direction, wall_type, get_weight) {
                 return true;
             }
 
@@ -857,7 +874,7 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
                     return false;
                 }
 
-                if calculate_forced_neighbor(sparse, current_cell, direction, wall_type) {
+                if calculate_forced_neighbor(sparse, current_cell, direction, wall_type, get_weight) {
                     return true;
                 }
             }
@@ -878,8 +895,8 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
                 line_directions = .[.{direction.x, 0, 0}, .{0, direction.y, 0}];
             }
 
-            forced_neighbor := !!calculate_forced_neighbor(sparse, cell, line_directions[0], wall_type);
-            forced_neighbor = forced_neighbor || calculate_forced_neighbor(sparse, cell, line_directions[1], wall_type);
+            forced_neighbor := !!calculate_forced_neighbor(sparse, cell, line_directions[0], wall_type, get_weight);
+            forced_neighbor = forced_neighbor || calculate_forced_neighbor(sparse, cell, line_directions[1], wall_type, get_weight);
             if forced_neighbor {
                 return true;
             }
@@ -903,21 +920,13 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
                 .{0, direction.y, direction.z},
             ];
 
+            // TODO this will check 3 diagonals which checks 6 lines
+            // but really we just need to check 3 lines
+
             jump_point := calculate_jump_point_diagonal(sparse, jump_cell, cell, diagonal_directions[0], wall_type);
             jump_point = jump_point || calculate_jump_point_diagonal(sparse, jump_cell, cell, diagonal_directions[1], wall_type);
             jump_point = jump_point || calculate_jump_point_diagonal(sparse, jump_cell, cell, diagonal_directions[2], wall_type);
             return jump_point;
-
-            // diagonal_indices := u8.[
-            //     offset_index_lookup[diagonal_directions[0].x + 1][diagonal_directions[0].y + 1][diagonal_directions[0].z + 1],
-            //     offset_index_lookup[diagonal_directions[1].x + 1][diagonal_directions[1].y + 1][diagonal_directions[1].z + 1],
-            //     offset_index_lookup[diagonal_directions[2].x + 1][diagonal_directions[2].y + 1][diagonal_directions[2].z + 1],
-            // ];
-
-            // jump_point := jump_cell.distances[diagonal_indices[0]] > 0;
-            // jump_point = jump_point || jump_cell.distances[diagonal_indices[1]] > 0;
-            // jump_point = jump_point || jump_cell.distances[diagonal_indices[2]] > 0;
-            // return jump_point;
         }
 
         component_count := abs(direction.x) + abs(direction.y) + abs(direction.z);
@@ -932,6 +941,8 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
 
         return false;
     }
+
+    // TODO since I always call this in order, line -> diagonal -> corner, can I not remove the recursion and just rely on jump values?
 
     direction_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
 
@@ -961,24 +972,76 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
     return S8_MAX;
 }
 
-calculate_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, wall_type: $T) -> [3] [3] ForcedOffsets {
+calculate_weight :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, $get_weight: (type: $T) -> u8) -> u8 {
+    cell_entry := get_cell_pointer(sparse, cell);
+    offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
+    jump_distance := cell_entry.distances[offset_index];
+    if jump_distance == -1 {
+        return 0;
+    }
+
+    {
+        // TODO test code
+        invalid := false;
+        start_weight := get_weight(get_cell(sparse, cell + direction).type);
+        for i: cast(s32) 2..abs(jump_distance) - 1 {
+            next_weight := get_weight(get_cell(sparse, cell + direction * i).type);
+            invalid = start_weight != next_weight;
+            if invalid break;
+            assert(start_weight == next_weight, "Found a travel line with varying weights.\n");
+        }
+
+        if invalid {
+            for i: cast(s32) 0..abs(jump_distance) - 1 {
+                next_weight := get_weight(get_cell(sparse, cell + direction * i).type);
+                print("%\n", next_weight);
+            }
+            assert(false, "Found a travel line with varying weights.\n");
+        }
+    }
+
+    next_cell_entry := get_cell(sparse, cell + direction);
+    return get_weight(next_cell_entry.type);
+}
+
+forced_offset_lookup :: [3] [3] ForcedOffsets.[
+    .[
+        .[.NXNYNZ, .NXNY, .NXNYPZ],
+        .[.NXNZ, .NX, .NXPZ],
+        .[.NXPYNZ, .NXPY, .NXPYPZ],
+    ], .[
+        .[.NYNZ, .NY, .NYPZ],
+        .[.NZ, .None, .PZ],
+        .[.PYNZ, .PY, .PYPZ],
+    ], .[
+        .[.PXNYNZ, .PXNY, .PXNYPZ],
+        .[.PXNZ, .PX, .PXPZ],
+        .[.PXPYNZ, .PXPY, .PXPYPZ],
+    ],
+];
+
+get_forced_offset :: (offset: SparseDir) -> ForcedOffsets {
+    return forced_offset_lookup[offset.x + 1][offset.y + 1][offset.z + 1];
+}
+
+calculate_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, wall_type: $T, $get_weight: (T) -> u8) -> [3] [3] ForcedOffsets {
     neighbors: [3] [3] ForcedOffsets;
-    neighbors[0][0] = calculate_forced_neighbor(sparse, cell, .{-1, 0, 0}, wall_type);
+    neighbors[0][0] = calculate_forced_neighbor(sparse, cell, .{-1, 0, 0}, wall_type, get_weight);
     neighbors[0][1] = .None;
-    neighbors[0][2] = calculate_forced_neighbor(sparse, cell, .{1, 0, 0}, wall_type);
-    neighbors[1][0] = calculate_forced_neighbor(sparse, cell, .{0, -1, 0}, wall_type);
+    neighbors[0][2] = calculate_forced_neighbor(sparse, cell, .{1, 0, 0}, wall_type, get_weight);
+    neighbors[1][0] = calculate_forced_neighbor(sparse, cell, .{0, -1, 0}, wall_type, get_weight);
     neighbors[1][1] = .None;
-    neighbors[1][2] = calculate_forced_neighbor(sparse, cell, .{0, 1, 0}, wall_type);
-    neighbors[2][0] = calculate_forced_neighbor(sparse, cell, .{0, 0, -1}, wall_type);
+    neighbors[1][2] = calculate_forced_neighbor(sparse, cell, .{0, 1, 0}, wall_type, get_weight);
+    neighbors[2][0] = calculate_forced_neighbor(sparse, cell, .{0, 0, -1}, wall_type, get_weight);
     neighbors[2][1] = .None;
-    neighbors[2][2] = calculate_forced_neighbor(sparse, cell, .{0, 0, 1}, wall_type);
+    neighbors[2][2] = calculate_forced_neighbor(sparse, cell, .{0, 0, 1}, wall_type, get_weight);
     return neighbors;
 }
 
-calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> ForcedOffsets, bool {
+calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T, $get_weight: (T) -> u8) -> ForcedOffsets, bool {
     assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 1, "You can only check for forced neighbors of a line.\n");
 
-    // we assume in this function the cell you're checking must be empty
+    // we assume in this function the cell you're checking must be valid
 
     empty_cell_directions: [8] SparseDir = ---;
     forced_cell_offsets: [8] ForcedOffsets = ---;
@@ -1057,6 +1120,46 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
 
         if forced_neighbor {
             forced_offsets |= forced_cell_offsets[diagonal_index];
+        }
+    }
+
+    if is_using(EXTREMELY_DUMB_BUG, WeightData) {
+        start_weight := get_weight(get_cell(sparse, cell - direction).type);
+
+        // TODO I'm going to mark every cel that changes weight as as jump cell with forced neighbors
+        // however in reality I think you mark cells that you enter that lower weight as jump cells
+        // and you mark cells that are wall-configured forced neighbors that gain weight as jump cells
+
+        // im going to return forward as a forced neighbor if the weight changes to trigger the jump distance result
+
+        forward_weight := get_weight(get_cell(sparse, cell).type);
+
+        if start_weight != forward_weight {
+            forced_offsets |= get_forced_offset(direction);
+        }
+
+        for corner_indices: corner_indices_groups {
+            // all the cells are empty, so it isn't a traditional forced neighbor
+            // and also the cell we're trying to go to is a different weight
+            forced_neighbor := is_empty(jump_point_empty_cells[corner_indices[0]], wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_cells[corner_indices[1]], wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_cells[corner_indices[2]], wall_type);
+            // forced_neighbor = forced_neighbor && is_empty(jump_point_wall_cells[corner_indices[0]], wall_type);
+            forced_neighbor = forced_neighbor && get_weight(jump_point_empty_cells[corner_indices[0]]) != start_weight;
+
+            if forced_neighbor {
+                forced_offsets |= forced_cell_offsets[corner_indices[0]];
+            }
+        }
+
+        for diagonal_index: diagonal_indices {
+            forced_neighbor := is_empty(jump_point_empty_cells[diagonal_index], wall_type);
+            // forced_neighbor = forced_neighbor && is_empty(jump_point_wall_cells[diagonal_index], wall_type);
+            forced_neighbor = forced_neighbor && get_weight(jump_point_empty_cells[diagonal_index]) != start_weight;
+
+            if forced_neighbor {
+                forced_offsets |= forced_cell_offsets[diagonal_index];
+            }
         }
     }
 

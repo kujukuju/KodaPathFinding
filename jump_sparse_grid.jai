@@ -1,12 +1,12 @@
 
-// JumpSparseGrid :: struct (T: Type) {
-//     using grid: SparseGrid(JumpEntry(T));
-// }
-
 JumpData :: struct (JumpDataType: Type) {
     type: JumpDataType;
     distances: [offsets.count] s8;
     forced_neighbors: [3] [3] ForcedOffsets;
+}
+
+WeightData :: struct {
+    weights: [offsets.count] u8;
 }
 
 GoalBounds :: struct {

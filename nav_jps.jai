@@ -385,7 +385,11 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                     // }
 
                     if new_forced_offsets {
-                        new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index];
+                        #if #run is_using(A, WeightData) {
+                            new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index] * sparse_entry.weights[it_index];
+                        } else {
+                            new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index];
+                        }
                         new_visited_heuristic := new_travelled_distance + grid_heuristic(jump_cell, end_cell);
 
                         push_open_entry(*open_queue, *fast_stack, ForcedEntry.{
@@ -441,26 +445,6 @@ grid_heuristic :: (a: SparseIndex, b: SparseIndex) -> float {
     three_dim_length :: 1.732051;
 
     return (delta_max - delta_mid) * one_dim_length + (delta_mid - delta_min) * two_dim_length + delta_min * three_dim_length;
-}
-
-forced_offset_lookup :: [3] [3] ForcedOffsets.[
-    .[
-        .[.NXNYNZ, .NXNY, .NXNYPZ],
-        .[.NXNZ, .NX, .NXPZ],
-        .[.NXPYNZ, .NXPY, .NXPYPZ],
-    ], .[
-        .[.NYNZ, .NY, .NYPZ],
-        .[.NZ, .None, .PZ],
-        .[.PYNZ, .PY, .PYPZ],
-    ], .[
-        .[.PXNYNZ, .PXNY, .PXNYPZ],
-        .[.PXNZ, .PX, .PXPZ],
-        .[.PXPYNZ, .PXPY, .PXPYPZ],
-    ],
-];
-
-get_forced_offset :: (offset: SparseDir) -> ForcedOffsets {
-    return forced_offset_lookup[offset.x + 1][offset.y + 1][offset.z + 1];
 }
 
 is_wall :: (cell_type: $T, wall_type: T) -> bool {
