@@ -99,7 +99,7 @@ destroy :: (grid_generator: *GridGenerator) {
 }
 
 // TODO if I do *SparseGrid(JumpData(T)) it doesn't work
-bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, $get_weight: (T) -> u8 = null) {
+bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     bake_distances :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), indices: [] u8, wall_type: T) {
         for grid, grid_index: sparse.grids {
             for *cell, cell_index: grid {
@@ -110,10 +110,10 @@ bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, $get
                 cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
                 for index: indices {
                     direction := offsets[index];
-                    cell.distances[index] = calculate_step_distance(sparse, cell_sparse_index, direction, wall_type, get_weight);
+                    cell.distances[index] = calculate_step_distance(sparse, cell_sparse_index, direction, wall_type);
 
-                    #if #run is_using(EXTREMELY_DUMB_BUG, WeightData) {
-                        cell.weights[index] = calculate_weight(sparse, cell_sparse_index, direction, get_weight);
+                    #if #run is_using(EXTREMELY_DUMB_BUG, "WeightData") {
+                        cell.weights[index] = get_weight_type(sparse, cell_sparse_index, direction, T);
                     }
                 }
             }
@@ -376,7 +376,7 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     }
 }
 
-bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, $get_weight: (T) -> u8 = null) {
+bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     for grid, grid_index: sparse.grids {
         for *cell, cell_index: grid {
             if cell.type == wall_type {
@@ -384,7 +384,7 @@ bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $
             }
 
             cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
-            cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type, get_weight);
+            cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type);
         }
     }
 }
@@ -846,7 +846,7 @@ mark_air :: (using generator: *GridGenerator($T, $D, $B), sparse: *SparseGrid($E
 
 // you have to calculate step distances line -> diagonal -> corner
 // so we can assume when you're calling calculate on a diagonal every single cell has it's line value completed
-calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T, $get_weight: (T) -> u8) -> s8 {
+calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> s8 {
     // im going to do this such that positive numbers are forced neighbor distances
     // negative numbers are wall distances
     // and S8_MAX is a forced neighbor continuation indicator
@@ -863,7 +863,7 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
 
             current_cell := cell;
 
-            if calculate_forced_neighbor(sparse, current_cell, direction, wall_type, get_weight) {
+            if calculate_forced_neighbor(sparse, current_cell, direction, wall_type) {
                 return true;
             }
 
@@ -874,7 +874,7 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
                     return false;
                 }
 
-                if calculate_forced_neighbor(sparse, current_cell, direction, wall_type, get_weight) {
+                if calculate_forced_neighbor(sparse, current_cell, direction, wall_type) {
                     return true;
                 }
             }
@@ -895,8 +895,8 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
                 line_directions = .[.{direction.x, 0, 0}, .{0, direction.y, 0}];
             }
 
-            forced_neighbor := !!calculate_forced_neighbor(sparse, cell, line_directions[0], wall_type, get_weight);
-            forced_neighbor = forced_neighbor || calculate_forced_neighbor(sparse, cell, line_directions[1], wall_type, get_weight);
+            forced_neighbor := !!calculate_forced_neighbor(sparse, cell, line_directions[0], wall_type);
+            forced_neighbor = forced_neighbor || calculate_forced_neighbor(sparse, cell, line_directions[1], wall_type);
             if forced_neighbor {
                 return true;
             }
@@ -946,11 +946,54 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
 
     direction_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
 
+    is_wall_step :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), step_cell: SparseIndex, direction: SparseDir, wall_type: $T) -> bool {
+        origin_cell := step_cell - direction;
+
+        component_count := fastabs(direction.x) + fastabs(direction.y) + fastabs(direction.z);
+        if component_count == {
+            case 1;
+                return false;
+            case 2;
+                checks: [2] SparseDir = ---;
+                if direction.x == 0 {
+                    checks = .[.{0, direction.y, 0}, .{0, 0, direction.z}];
+                } else if direction.y == 0 {
+                    checks = .[.{direction.x, 0, 0}, .{0, 0, direction.z}];
+                } else if direction.z == 0 {
+                    checks = .[.{direction.x, 0, 0}, .{0, direction.y, 0}];
+                }
+
+                for check: checks {
+                    if is_wall(get_cell(sparse, origin_cell + check).type, wall_type) {
+                        return true;
+                    }
+                }
+                return false;
+            case 3;
+                checks: [6] SparseDir = .[
+                    .{direction.x, 0, 0}, .{0, direction.y, 0}, .{0, 0, direction.z},
+                    .{direction.x, direction.y, 0}, .{direction.x, 0, direction.z}, .{0, direction.y, direction.z},
+                ];
+
+                for check: checks {
+                    if is_wall(get_cell(sparse, origin_cell + check).type, wall_type) {
+                        return true;
+                    }
+                }
+                return false;
+        }
+        return false;
+    }
+
     for i: cast(s8) 1..S8_MAX - 1 {
         check_cell := cell + direction * i;
 
         jump_cell := get_cell(sparse, check_cell);
         if is_wall(jump_cell.type, wall_type) {
+            return -i;
+        }
+
+        if is_wall_step(sparse, check_cell, direction, wall_type) {
             return -i;
         }
 
@@ -972,12 +1015,13 @@ calculate_step_distance :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Spar
     return S8_MAX;
 }
 
-calculate_weight :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, $get_weight: (type: $T) -> u8) -> u8 {
+get_weight_type :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, $T: Type) -> T {
     cell_entry := get_cell_pointer(sparse, cell);
     offset_index := offset_index_lookup[direction.x + 1][direction.y + 1][direction.z + 1];
     jump_distance := cell_entry.distances[offset_index];
     if jump_distance == -1 {
-        return 0;
+        empty: T;
+        return empty;
     }
 
     {
@@ -1000,8 +1044,9 @@ calculate_weight :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex
         }
     }
 
-    next_cell_entry := get_cell(sparse, cell + direction);
-    return get_weight(next_cell_entry.type);
+    // next_cell_entry := get_cell(sparse, cell + direction);
+    // return get_weight(next_cell_entry.type);
+    return get_cell(sparse, cell + direction).type;
 }
 
 forced_offset_lookup :: [3] [3] ForcedOffsets.[
@@ -1024,28 +1069,30 @@ get_forced_offset :: (offset: SparseDir) -> ForcedOffsets {
     return forced_offset_lookup[offset.x + 1][offset.y + 1][offset.z + 1];
 }
 
-calculate_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, wall_type: $T, $get_weight: (T) -> u8) -> [3] [3] ForcedOffsets {
+calculate_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, wall_type: $T) -> [3] [3] ForcedOffsets {
     neighbors: [3] [3] ForcedOffsets;
-    neighbors[0][0] = calculate_forced_neighbor(sparse, cell, .{-1, 0, 0}, wall_type, get_weight);
+    neighbors[0][0] = calculate_forced_neighbor(sparse, cell, .{-1, 0, 0}, wall_type);
     neighbors[0][1] = .None;
-    neighbors[0][2] = calculate_forced_neighbor(sparse, cell, .{1, 0, 0}, wall_type, get_weight);
-    neighbors[1][0] = calculate_forced_neighbor(sparse, cell, .{0, -1, 0}, wall_type, get_weight);
+    neighbors[0][2] = calculate_forced_neighbor(sparse, cell, .{1, 0, 0}, wall_type);
+    neighbors[1][0] = calculate_forced_neighbor(sparse, cell, .{0, -1, 0}, wall_type);
     neighbors[1][1] = .None;
-    neighbors[1][2] = calculate_forced_neighbor(sparse, cell, .{0, 1, 0}, wall_type, get_weight);
-    neighbors[2][0] = calculate_forced_neighbor(sparse, cell, .{0, 0, -1}, wall_type, get_weight);
+    neighbors[1][2] = calculate_forced_neighbor(sparse, cell, .{0, 1, 0}, wall_type);
+    neighbors[2][0] = calculate_forced_neighbor(sparse, cell, .{0, 0, -1}, wall_type);
     neighbors[2][1] = .None;
-    neighbors[2][2] = calculate_forced_neighbor(sparse, cell, .{0, 0, 1}, wall_type, get_weight);
+    neighbors[2][2] = calculate_forced_neighbor(sparse, cell, .{0, 0, 1}, wall_type);
     return neighbors;
 }
 
-calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T, $get_weight: (T) -> u8) -> ForcedOffsets, bool {
+calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: SparseIndex, direction: SparseDir, wall_type: $T) -> ForcedOffsets, bool {
     assert(abs(direction.x) + abs(direction.y) + abs(direction.z) == 1, "You can only check for forced neighbors of a line.\n");
 
     // we assume in this function the cell you're checking must be valid
 
     empty_cell_directions: [8] SparseDir = ---;
     forced_cell_offsets: [8] ForcedOffsets = ---;
+    forced_cell_corner_offsets: [8] ForcedOffsets = ---;
     jump_point_empty_cells: [8] T = ---;
+    jump_point_empty_corner_cells: [8] T = ---;
     jump_point_wall_cells: [8] T = ---;
 
     if direction.x != 0 {
@@ -1083,9 +1130,13 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
         ];
     }
 
+    forward_cell := get_cell(sparse, cell + direction).type;
+
     for empty_cell_direction: empty_cell_directions {
-        forced_cell_offsets[it_index] = get_forced_offset(empty_cell_direction) | get_forced_offset(empty_cell_direction + direction);
+        forced_cell_offsets[it_index] = get_forced_offset(empty_cell_direction);
+        forced_cell_corner_offsets[it_index] = get_forced_offset(empty_cell_direction + direction);
         jump_point_empty_cells[it_index] = get_cell(sparse, cell + empty_cell_direction).type;
+        jump_point_empty_corner_cells[it_index] = get_cell(sparse, cell + empty_cell_direction + direction).type;
         jump_point_wall_cells[it_index] = get_cell(sparse, cell + empty_cell_direction - direction).type;
     }
 
@@ -1112,6 +1163,16 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
         if forced_neighbor {
             forced_offsets |= forced_cell_offsets[corner_indices[0]];
         }
+
+        // now check true corner
+        forced_neighbor = forced_neighbor && is_empty(forward_cell, wall_type);
+        forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[0]], wall_type);
+        forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[1]], wall_type);
+        forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[2]], wall_type);
+
+        if forced_neighbor {
+            forced_offsets |= forced_cell_corner_offsets[corner_indices[0]];
+        }
     }
 
     for diagonal_index: diagonal_indices {
@@ -1121,9 +1182,17 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
         if forced_neighbor {
             forced_offsets |= forced_cell_offsets[diagonal_index];
         }
+
+        // now check true corner
+        forced_neighbor = forced_neighbor && is_empty(forward_cell, wall_type);
+        forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[diagonal_index], wall_type);
+
+        if forced_neighbor {
+            forced_offsets |= forced_cell_corner_offsets[diagonal_index];
+        }
     }
 
-    if is_using(EXTREMELY_DUMB_BUG, WeightData) {
+    if is_using(EXTREMELY_DUMB_BUG, "WeightData") {
         start_weight := get_weight(get_cell(sparse, cell - direction).type);
 
         // TODO I'm going to mark every cel that changes weight as as jump cell with forced neighbors
@@ -1150,6 +1219,17 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
             if forced_neighbor {
                 forced_offsets |= forced_cell_offsets[corner_indices[0]];
             }
+
+            // now check true corner
+            forced_neighbor = forced_neighbor && is_empty(forward_cell, wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[0]], wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[1]], wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[corner_indices[2]], wall_type);
+            forced_neighbor = forced_neighbor && get_weight(jump_point_empty_corner_cells[corner_indices[0]]) != start_weight;
+
+            if forced_neighbor {
+                forced_offsets |= forced_cell_corner_offsets[corner_indices[0]];
+            }
         }
 
         for diagonal_index: diagonal_indices {
@@ -1159,6 +1239,15 @@ calculate_forced_neighbor :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell: Sp
 
             if forced_neighbor {
                 forced_offsets |= forced_cell_offsets[diagonal_index];
+            }
+
+            // now check true corner
+            forced_neighbor = forced_neighbor && is_empty(forward_cell, wall_type);
+            forced_neighbor = forced_neighbor && is_empty(jump_point_empty_corner_cells[diagonal_index], wall_type);
+            forced_neighbor = forced_neighbor && get_weight(jump_point_empty_corner_cells[diagonal_index]) != start_weight;
+
+            if forced_neighbor {
+                forced_offsets |= forced_cell_corner_offsets[diagonal_index];
             }
         }
     }

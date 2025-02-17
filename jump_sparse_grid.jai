@@ -5,8 +5,8 @@ JumpData :: struct (JumpDataType: Type) {
     forced_neighbors: [3] [3] ForcedOffsets;
 }
 
-WeightData :: struct {
-    weights: [offsets.count] u8;
+WeightData :: struct (WeightDataType: Type) {
+    weights: [offsets.count] WeightDataType;
 }
 
 GoalBounds :: struct {
@@ -75,6 +75,11 @@ travel_offsets :: [3] [3] ForcedOffsets.[
         .[.PX | .PY | .NZ | .PXPY | .PXNZ | .PYNZ | .PXPYNZ, .PX | .PY | .PXPY, .PX | .PY | .PZ | .PXPY | .PXPZ | .PYPZ | .PXPYPZ],
     ],
 ];
+
+// im not sure of a better way to arbitrarily get access to these struct types
+// get_weight :: (type: $T, weights: WeightData(T, $F)) -> u8 {
+//     return F(type);
+// }
 
 // a jump sparse grid is a sparse grid that contains connection information for visually continuous sections of mesh
 // this, I think, will heavily optimize the path finding algorithm

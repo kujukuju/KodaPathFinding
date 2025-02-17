@@ -139,14 +139,14 @@ visualize_checks: int = 10000000;
 performance_test :: false;
 visualize :: false;
 
-path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T) -> NavPath {
+path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T, air_type: T, jump_height: float) -> NavPath {
     source_cell := get_cell_index(sparse.*, source_point);
     target_cell := get_cell_index(sparse.*, target_point);
 
-    return path_find_jps(sparse, source_cell, target_cell, wall_type);
+    return path_find_jps(sparse, source_cell, target_cell, wall_type, air_type, jump_height);
 }
 
-path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: $T) -> NavPath {
+path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell: SparseIndex, wall_type: $T, air_type: T, jump_height: float) -> NavPath {
     log_reset();
     defer log_print();
 
@@ -165,6 +165,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         sparse_entry: *A;
         travelled_distance: float;
         heuristic_distance: float;
+        air_distance: float;
         forced_offsets: ForcedOffsets;
     }
 
@@ -233,6 +234,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         get_cell_pointer(sparse, start_cell),
         0,
         grid_heuristic(start_cell, end_cell),
+        0.0,
         .PX | .NX | .PY | .NY | .PZ | .NZ | .PXPZ | .PXNZ | .NXPZ | .NXNZ | .PXPY | .PXNY | .NXPY | .NXNY | .PYPZ | .PYNZ | .NYPZ | .NYNZ | .PXPYPZ | .PXPYNZ | .PXNYPZ | .PXNYNZ | .NXPYPZ | .NXPYNZ | .NXNYPZ | .NXNYNZ,
     };
 
@@ -349,6 +351,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
 
         travelled_distance := forced_entry.travelled_distance;
         forced_offsets := forced_entry.forced_offsets;
+        air_distance := forced_entry.air_distance;
 
         #if visualize {
             array_add(*jump_pairs, .[parent_cell, forced_cell]);
@@ -370,6 +373,21 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                 }
 
                 if jump_distance > 0 {
+                    // I think the way forced neighbors work for type boundaries is
+                    // the jump starts just inside the new cell type
+                    // and it jumps to when the next type would begin
+                    // so if the current cell type is air we add the jump distance
+                    new_air_distance := air_distance;
+                    if sparse_entry.type == air_type && offset.y >= 0 {
+                        new_air_distance += jump_distance * offset_distances[it_index];
+                    } else {
+                        new_air_distance = 0;
+                    }
+
+                    if new_air_distance > jump_height {
+                        continue;
+                    }
+
                     jump_cell := forced_cell + offset * jump_distance;
                     if jump_cell == end_cell {
                         return get_path(sparse, forced_cell, start_cell, end_cell, visited_search_index);
@@ -380,13 +398,9 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                     new_forced_offsets := get_forced_neighbors(sparse, jump_entry, offset);
                     new_forced_offsets |= travel_offsets[offset.x + 1][offset.y + 1][offset.z + 1];
 
-                    // if !end_jump {
-                    //     new_forced_offsets &= get_bounded_offsets(sparse, jump_cell, end_cell, new_forced_offsets);
-                    // }
-
                     if new_forced_offsets {
-                        #if #run is_using(A, WeightData) {
-                            new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index] * sparse_entry.weights[it_index];
+                        #if #run is_using(A, "WeightData") {
+                            new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index] * get_weight(sparse_entry.weights[it_index]);
                         } else {
                             new_travelled_distance := travelled_distance + jump_distance * offset_distances[it_index];
                         }
@@ -398,6 +412,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                             jump_entry,
                             new_travelled_distance,
                             new_visited_heuristic,
+                            new_air_distance,
                             new_forced_offsets,
                         });
                     }

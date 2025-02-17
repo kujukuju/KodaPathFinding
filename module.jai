@@ -10,6 +10,30 @@
 
 #scope_module
 
+is_using :: ($parent: Type, $child_name: string) -> bool {
+    // this should bake the result into every uniquely polymorphic procedure at compile time but allow it to be called at runtime as far as I can figure
+    // which should be better for the compiler
+    result :: #run () -> bool {
+        parent_info := cast(*Type_Info_Struct) parent;
+        if parent_info.type != .STRUCT {
+            return false;
+        }
+
+        for member: parent_info.members {
+            member_struct := cast(*Type_Info_Struct) member.type;
+
+            is_child := !!(member.flags & .USING);
+            is_child = is_child && member_struct.type == .STRUCT && member_struct.name == child_name;
+            if is_child {
+                return true;
+            }
+        }
+
+        return false;
+    }();
+    return result;
+}
+
 is_using :: ($parent: Type, $child: Type) -> bool {
     // this should bake the result into every uniquely polymorphic procedure at compile time but allow it to be called at runtime as far as I can figure
     // which should be better for the compiler
