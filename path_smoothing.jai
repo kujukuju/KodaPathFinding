@@ -1,5 +1,5 @@
 
-smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, invalid_types: $R) -> [..] SparseIndex {
+smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, valid_types: $R) -> [..] SparseIndex {
     result: [..] SparseIndex;
 
     if path.count <= 2 {
@@ -19,9 +19,14 @@ smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, invalid_types: $R) 
 
         // get the cell we're currently checking if it has visibility
         for path_cell: JumpLineIterator.{current_anchor, next_end} {
-            if is_valid_path(grid, result[result.count - 1], path_cell, invalid_types) {
+            if it_index == 0 {
+                continue;
+            }
+
+            if is_valid_path(grid, result[result.count - 1], path_cell, valid_types) {
                 last_valid_anchor = path_cell;
             } else {
+                print("Invalid path: % %\n", result[result.count - 1], path_cell);
                 array_add(*result, last_valid_anchor);
 
                 current_anchor = last_valid_anchor;
@@ -45,15 +50,17 @@ smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, invalid_types: $R) 
     return result;
 }
 
-is_valid_path :: (grid: *SparseGrid($T), p1: SparseIndex, p2: SparseIndex, invalid_types: $R) -> bool {
+is_valid_path :: (grid: *SparseGrid($T), p1: SparseIndex, p2: SparseIndex, valid_types: $R) -> bool {
     // TODO maybe inverting this optimizes it
 
     for path_cell: DDAIterator.{p1, p2} {
         path_cell_type := get_cell(grid, path_cell).type;
 
-        if path_cell_type & invalid_types {
-            return false;
+        if path_cell_type & valid_types {
+            continue;
         }
+
+        return false;
     }
 
     return true;

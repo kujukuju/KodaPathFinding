@@ -389,23 +389,21 @@ bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $
     }
 }
 
-bake_empty_adjacent :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, empty_adjacent_type: T) {
+bake_ground_adjacent :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), ground_type: $T, ground_adjacent_type: T) {
     for cell, cell_index: sparse {
-        if cell.type & wall_type {
+        if !(cell.type & ground_type) {
             continue;
         }
 
-        for y: cast(s8) -1..cast(s8) 1 {
-            if y == 0 {
-                continue;
-            }
-
+        for y: s8.[-1, 1] {
             offset_index := cell_index + SparseDir.{0, y, 0};
             offset_cell := get_cell(sparse, offset_index);
 
-            if offset_cell.type & wall_type {
-                set_cell(sparse, offset_index, empty_adjacent_type);
+            if offset_cell.type & ground_type {
+                continue;
             }
+
+            set_cell(sparse, offset_index, offset_cell.type | ground_adjacent_type);
         }
     }
 }
