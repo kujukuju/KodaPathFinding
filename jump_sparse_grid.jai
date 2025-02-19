@@ -1,5 +1,5 @@
 
-JumpData :: struct (JumpDataType: Type) {
+JumpData :: struct (JumpDataType: Type, DefaultValue: JumpDataType) {
     type: JumpDataType;
     distances: [offsets.count] s8;
     forced_neighbors: [3] [3] ForcedOffsets;
@@ -75,6 +75,31 @@ travel_offsets :: [3] [3] ForcedOffsets.[
         .[.PX | .PY | .NZ | .PXPY | .PXNZ | .PYNZ | .PXPYNZ, .PX | .PY | .PXPY, .PX | .PY | .PZ | .PXPY | .PXPZ | .PYPZ | .PXPYPZ],
     ],
 ];
+
+get_cell_type :: (jump_data: JumpData($T, $R)) -> Type {
+    return T;
+}
+
+// get_cell_type :: (jump_data: *JumpData($T, $R)) -> T {
+//     return T;
+// }
+
+// get_cell_type :: (sparse: SparseGrid($A)) -> Type {
+
+//     return #run () -> Type {
+//         empty: A;
+//         return get_cell_type(empty);
+//     }();
+// }
+
+get_default_value :: (sparse: SparseGrid($A), $T: Type) -> T {
+    empty: A;
+    return get_default_value(empty.jump_data);
+}
+
+get_default_value :: (jump_data: JumpData($T, $R)) -> T {
+    return R;
+}
 
 // im not sure of a better way to arbitrarily get access to these struct types
 // get_weight :: (type: $T, weights: WeightData(T, $F)) -> u8 {

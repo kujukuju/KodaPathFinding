@@ -172,7 +172,7 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     requests := NewArray(core_count, GoalBoundsRequest);
 
     for cell, cell_index: sparse {
-        if cell.type == wall_type {
+        if is_type(cell.type, wall_type) {
             continue;
         }
         array_add(*check_cells, cell_index);
@@ -379,12 +379,33 @@ bake_goal_bounds :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
 bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     for grid, grid_index: sparse.grids {
         for *cell, cell_index: grid {
-            if cell.type == wall_type {
+            if is_type(cell.type, wall_type) {
                 continue;
             }
 
             cell_sparse_index := get_cell_index(sparse, grid_index, cell_index);
             cell.forced_neighbors = calculate_forced_neighbors(sparse, cell_sparse_index, wall_type);
+        }
+    }
+}
+
+bake_empty_adjacent :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T, empty_adjacent_type: T) {
+    for cell, cell_index: sparse {
+        if cell.type & wall_type {
+            continue;
+        }
+
+        for y: cast(s8) -1..cast(s8) 1 {
+            if y == 0 {
+                continue;
+            }
+
+            offset_index := cell_index + SparseDir.{0, y, 0};
+            offset_cell := get_cell(sparse, offset_index);
+
+            if offset_cell.type & wall_type {
+                set_cell(sparse, offset_index, empty_adjacent_type);
+            }
         }
     }
 }
@@ -402,7 +423,7 @@ iterate_air :: (using generator: *GridGenerator($T, $D, $B), sparse: *SparseGrid
         }
 
         for cell, cell_index: sparse {
-            if cell.type == ground_type {
+            if is_type(cell.type, ground_type) {
                 array_add(*air_queue, cell_index);
             }
         }
@@ -785,7 +806,7 @@ iterate_nav_grid :: (using generator: *GridGenerator($T, $D, $B), sparse: *Spars
                         // why we won't continue the iteration of these cells mid air
                         if line_cell.ground {
                             mark_ground(generator, sparse, line_cell.cell);
-                        } else if get_cell(sparse, line_cell.cell).type == empty_type {
+                        } else if is_type(get_cell(sparse, line_cell.cell).type, empty_type) {
                             // we only want to set air on cells that are not ground, so empty
                             mark_air(generator, sparse, line_cell.cell);
                         }

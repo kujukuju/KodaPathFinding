@@ -196,26 +196,28 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     start_cell := source_cell;
     maximum_fall_cells :: 40;
     for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, start_cell).type != .Empty {
+        if is_empty(get_cell(sparse, start_cell).type, wall_type) {
+            print("Found empty start after % checks.\n", it);
             break;
         }
 
         start_cell.y -= 1;
     }
-    if get_cell(sparse, start_cell).type == .Empty {
+    if is_wall(get_cell(sparse, start_cell).type, wall_type) {
         print("No source ground found.\n");
         return .{};
     }
 
     end_cell := target_cell;
     for 0..maximum_fall_cells - 1 {
-        if get_cell(sparse, end_cell).type != .Empty {
+        if is_empty(get_cell(sparse, end_cell).type, wall_type) {
+            print("Found empty end after % checks.\n", it);
             break;
         }
 
         end_cell.y -= 1;
     }
-    if get_cell(sparse, end_cell).type == .Empty {
+    if is_wall(get_cell(sparse, end_cell).type, wall_type) {
         print("No target ground found.\n");
         return .{};
     }
@@ -378,7 +380,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                     // and it jumps to when the next type would begin
                     // so if the current cell type is air we add the jump distance
                     new_air_distance := air_distance;
-                    if sparse_entry.type == air_type && offset.y >= 0 {
+                    if is_type(sparse_entry.type, air_type) && offset.y >= 0 {
                         new_air_distance += jump_distance * offset_distances[it_index];
                     } else {
                         new_air_distance = 0;
@@ -394,6 +396,7 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
                     }
 
                     jump_entry := get_cell_pointer(sparse, jump_cell);
+                    assert(!!jump_entry, "Found invalid cell pointer. %\n", jump_cell);
 
                     new_forced_offsets := get_forced_neighbors(sparse, jump_entry, offset);
                     new_forced_offsets |= travel_offsets[offset.x + 1][offset.y + 1][offset.z + 1];
