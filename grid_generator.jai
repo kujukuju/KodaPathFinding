@@ -103,7 +103,7 @@ bake_distances :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $T) {
     bake_distances :: (sparse: *SparseGrid(EXTREMELY_DUMB_BUG), indices: [] u8, wall_type: T) {
         for grid, grid_index: sparse.grids {
             for *cell, cell_index: grid {
-                if cell.type == wall_type {
+                if cell.type & wall_type {
                     continue;
                 }
 
@@ -391,19 +391,17 @@ bake_forced_neighbors :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), wall_type: $
 
 bake_ground_adjacent :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), ground_type: $T, ground_adjacent_type: T) {
     for cell, cell_index: sparse {
-        if !(cell.type & ground_type) {
-            continue;
-        }
+        if cell.type & ground_type {
+            for y: s8.[-1, 1] {
+                offset_index := cell_index + SparseDir.{0, y, 0};
+                offset_cell_type := get_cell(sparse, offset_index).type;
 
-        for y: s8.[-1, 1] {
-            offset_index := cell_index + SparseDir.{0, y, 0};
-            offset_cell := get_cell(sparse, offset_index);
+                if offset_cell_type & ground_type {
+                    continue;
+                }
 
-            if offset_cell.type & ground_type {
-                continue;
+                set_cell(sparse, offset_index, offset_cell_type | ground_adjacent_type);
             }
-
-            set_cell(sparse, offset_index, offset_cell.type | ground_adjacent_type);
         }
     }
 }

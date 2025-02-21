@@ -170,41 +170,15 @@ is_jump_data :: (type: Type, other_type: Type) -> bool {
     return false;
 }
 
-set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
-    entry: EXTREMELY_DUMB_BUG;
-    entry.type = type;
-    set_cell(sparse, point, entry);
-}
+// set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), point: Vector3, type: $T) #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
+//     entry: EXTREMELY_DUMB_BUG;
+//     entry.type = type;
+//     set_cell(sparse, point, entry);
+// }
 
 set_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), cell_index: SparseIndex, type: $T) #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
-    entry: EXTREMELY_DUMB_BUG;
+    entry := get_or_add_cell_pointer(sparse, cell_index);
     entry.type = type;
-    set_cell(sparse, cell_index, entry);
-}
-
-get_nearest_cell :: (sparse: *SparseGrid($EXTREMELY_DUMB_BUG), line: Line3, valid: $T) -> SparseIndex, bool #modify {return is_jump_data(EXTREMELY_DUMB_BUG, T);} {
-    nearest_cell: SparseIndex;
-    found_nearest_cell: bool;
-
-    for cell, cell_index: get_cells_from_line(sparse, line) {
-        if cell.type == valid || cell.type & valid {
-            nearest_cell = cell_index;
-            found_nearest_cell = true;
-            break;
-        }
-    }
-
-    if !found_nearest_cell {
-        return .{}, false;
-    }
-
-    cell_boundaries := get_cell_boundaries(sparse);
-
-    nearest_cell.x = clamp(nearest_cell.x, cell_boundaries[0].x, cell_boundaries[1].x);
-    nearest_cell.y = clamp(nearest_cell.y, cell_boundaries[0].y, cell_boundaries[1].y);
-    nearest_cell.z = clamp(nearest_cell.z, cell_boundaries[0].z, cell_boundaries[1].z);
-
-    return nearest_cell, true;
 }
 
 #scope_file

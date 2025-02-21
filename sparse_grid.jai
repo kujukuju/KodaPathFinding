@@ -142,11 +142,11 @@ get_cell :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bool {
             sparse.cached_grid.grid = grid;
             return sparse.cached_grid.grid[grid_cell_index], true;
         } else {
-            empty_entry :: T.{};
-            CellType :: #run get_cell_type(empty_entry.jump_data);
-            default_value := get_default_value(sparse, CellType);
+            // empty_entry :: T.{};
+            // CellType :: #run get_cell_type(empty_entry.jump_data);
+            // default_value := get_default_value(sparse, CellType);
             empty: T;
-            empty.type = default_value;
+            empty.type = .Empty;
             return empty, false;
         }
     }
@@ -159,11 +159,11 @@ get_cell_uncached :: (sparse: *SparseGrid($T), cell_index: SparseIndex) -> T, bo
     if grid_found {
         return grid[grid_cell_index], true;
     }
-    empty_entry :: T.{};
-    CellType :: #run get_cell_type(empty_entry.jump_data);
-    default_value := get_default_value(sparse, CellType);
+    // empty_entry :: T.{};
+    // CellType :: #run get_cell_type(empty_entry.jump_data);
+    // default_value := get_default_value(sparse, CellType);
     empty: T;
-    empty.type = default_value;
+    empty.type = .Empty;
     return empty, false;
 } @thread
 
@@ -407,6 +407,22 @@ sparse_grid_reset :: (sparse: *SparseGrid($T)) {
         } else {
             memset(grid.data, 0, grid.count * size_of(T));
         }
+
+        #if #run is_using(T, "JumpData") {
+            for i: 0..grid.count - 1 {
+                grid[i].type = .Empty;
+            }
+        }
+
+        // #if #run is_using(T, "JumpData") {
+        //     default_value := get_default_value(grid[0].jump_data);
+        //     if default_value {
+        //         print("default value is %\n", default_value);
+        //         for i: 0..grid.count - 1 {
+        //             grid[i].type = default_value;
+        //         }
+        //     }
+        // }
     }
 }
 

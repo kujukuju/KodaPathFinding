@@ -123,22 +123,6 @@ NavInfo :: struct (T: Type) {
     empty_type: T;
 }
 
-SearchPoint :: struct {
-    cell: SparseIndex;
-    distance_heuristic: float;
-}
-
-search_points: [..] SearchPoint;
-
-jump_pairs: [..] [2] SparseIndex;
-jump_checks: [..] [2] SparseIndex;
-wall_checks: [..] [2] SparseIndex;
-
-visualize_checks: int = 10000000;
-
-performance_test :: false;
-visualize :: false;
-
 path_find_jps :: (sparse: *SparseGrid($A), source_point: Vector3, target_point: Vector3, wall_type: $T, air_type: T, jump_height: float) -> NavPath {
     source_cell := get_cell_index(sparse.*, source_point);
     target_cell := get_cell_index(sparse.*, target_point);
@@ -151,10 +135,6 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     defer log_print();
 
     log("path_find_jps");
-
-    jump_pairs.count = 0;
-    jump_checks.count = 0;
-    wall_checks.count = 0;
 
     sparse.last_visited_search_index = (sparse.last_visited_search_index + 1) % U8_MAX;
     visited_search_index := sparse.last_visited_search_index;
@@ -194,31 +174,29 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     }
 
     start_cell := source_cell;
-    maximum_fall_cells :: 40;
+    maximum_fall_cells :: 10;
     for 0..maximum_fall_cells - 1 {
         if is_empty(get_cell(sparse, start_cell).type, wall_type) {
-            print("Found empty start after % checks.\n", it);
             break;
         }
 
         start_cell.y -= 1;
     }
     if is_wall(get_cell(sparse, start_cell).type, wall_type) {
-        print("No source ground found.\n");
+        // print("No source ground found.\n");
         return .{};
     }
 
     end_cell := target_cell;
     for 0..maximum_fall_cells - 1 {
         if is_empty(get_cell(sparse, end_cell).type, wall_type) {
-            print("Found empty end after % checks.\n", it);
             break;
         }
 
         end_cell.y -= 1;
     }
     if is_wall(get_cell(sparse, end_cell).type, wall_type) {
-        print("No target ground found.\n");
+        // print("No target ground found.\n");
         return .{};
     }
 
@@ -286,12 +264,12 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
     visited_heuristic_skipped := 0;
     visited_heuristic_visited := 0;
 
-    defer print("Skipped % cells from heuristic and visited %.\n", visited_heuristic_skipped, visited_heuristic_visited);
+    // defer print("Skipped % cells from heuristic and visited %.\n", visited_heuristic_skipped, visited_heuristic_visited);
 
     // defer print("Valid bounds checks were % and invalid bounds checks were %.\n", valid_bounds_count, invalid_bounds_count);
 
-    defer print("Checked % entries with % open queue entries and % fast stack entries.\n", check_count, open_queue_count, fast_stack_count);
-    defer print("Max open queue size was % and max fast stack size was %.\n", max_open_queue_count, max_fast_stack_count);
+    // defer print("Checked % entries with % open queue entries and % fast stack entries.\n", check_count, open_queue_count, fast_stack_count);
+    // defer print("Max open queue size was % and max fast stack size was %.\n", max_open_queue_count, max_fast_stack_count);
 
     push_open_entry :: (open_queue: *BinaryHeap(ForcedEntry, heuristic), fast_stack: *[..] ForcedEntry, entry: ForcedEntry) #expand {
         if entry.heuristic_distance <= `fast_stack_heuristic + 0.01 {
@@ -323,12 +301,6 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         defer check_count += 1;
         log("loop");
 
-        #if visualize {
-            if check_count >= visualize_checks {
-                return .{};
-            }
-        }
-
         forced_entry: ForcedEntry = ---;
         if fast_stack.count > 0 {
             forced_entry = fast_stack[fast_stack.count - 1];
@@ -355,24 +327,12 @@ path_find_jps :: (sparse: *SparseGrid($A), source_cell: SparseIndex, target_cell
         forced_offsets := forced_entry.forced_offsets;
         air_distance := forced_entry.air_distance;
 
-        #if visualize {
-            array_add(*jump_pairs, .[parent_cell, forced_cell]);
-        }
-
         // TODO try inverting this? after I add to visited earlier?
         for < offset: offsets {
             offset_flag := cast(ForcedOffsets) (1 << it_index);
 
             if forced_offsets & offset_flag {
                 jump_distance := get_jump_distance(sparse, forced_cell, sparse_entry, offset, end_cell);
-
-                #if visualize {
-                    if jump_distance > 0 {
-                        array_add(*jump_checks, .[forced_cell, forced_cell + offset * jump_distance]);
-                    } else if jump_distance < 0 {
-                        array_add(*wall_checks, .[forced_cell, forced_cell + offset * fastabs(jump_distance)]);
-                    }
-                }
 
                 if jump_distance > 0 {
                     // I think the way forced neighbors work for type boundaries is
@@ -434,25 +394,13 @@ grid_heuristic :: (a: SparseIndex, b: SparseIndex) -> float {
     // move in the second largest direction 2d diagonal line
     // move in the third largest direction 3d diagonal line
 
-    new_version :: true;
+    delta_x := fastabs(b.x - a.x);
+    delta_y := fastabs(b.y - a.y);
+    delta_z := fastabs(b.z - a.z);
 
-    #if new_version {
-        delta_x := fastabs(b.x - a.x);
-        delta_y := fastabs(b.y - a.y);
-        delta_z := fastabs(b.z - a.z);
-
-        delta_max := fastmax(delta_x, fastmax(delta_y, delta_z));
-        delta_min := fastmin(delta_x, fastmin(delta_y, delta_z));
-        delta_mid := delta_x + delta_y + delta_z - delta_min - delta_max;
-    } else {
-        delta_x := fastabs(b.x - a.x);
-        delta_y := fastabs(b.y - a.y);
-        delta_z := fastabs(b.z - a.z);
-
-        delta_max := max(delta_x, max(delta_y, delta_z));
-        delta_min := min(delta_x, min(delta_y, delta_z));
-        delta_mid := delta_x + delta_y + delta_z - delta_min - delta_max;
-    }
+    delta_max := fastmax(delta_x, fastmax(delta_y, delta_z));
+    delta_min := fastmin(delta_x, fastmin(delta_y, delta_z));
+    delta_mid := delta_x + delta_y + delta_z - delta_min - delta_max;
 
     // one_dim_count := delta_max - delta_mid;
     // two_dim_count := delta_mid - delta_min;
@@ -466,7 +414,7 @@ grid_heuristic :: (a: SparseIndex, b: SparseIndex) -> float {
 }
 
 is_wall :: (cell_type: $T, wall_type: T) -> bool {
-    return !!(cell_type & wall_type) || cell_type == wall_type;
+    return !!(cell_type & wall_type);
 }
 
 is_empty :: (cell_type: $T, wall_type: T) -> bool {

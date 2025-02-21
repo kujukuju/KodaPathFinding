@@ -6,6 +6,7 @@
 #load "nav_jps.jai";
 #load "nav_setup.jai";
 #load "path_smoothing.jai";
+#load "path_visualizer.jai";
 #load "sparse_grid.jai";
 #load "sparse_index.jai";
 

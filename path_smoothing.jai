@@ -26,7 +26,6 @@ smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, valid_types: $R) ->
             if is_valid_path(grid, result[result.count - 1], path_cell, valid_types) {
                 last_valid_anchor = path_cell;
             } else {
-                print("Invalid path: % %\n", result[result.count - 1], path_cell);
                 array_add(*result, last_valid_anchor);
 
                 current_anchor = last_valid_anchor;
@@ -41,7 +40,7 @@ smooth_path :: (grid: *SparseGrid($T), path: [] SparseIndex, valid_types: $R) ->
         next_end_index -= 1;
     }
 
-    if current_anchor != path[0] {
+    if result[result.count - 1] != path[0] {
         array_add(*result, path[0]);
     }
 
