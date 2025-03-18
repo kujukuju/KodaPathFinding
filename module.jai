@@ -4,6 +4,7 @@
 #load "jump_sparse_grid.jai";
 #load "nav_astar.jai";
 #load "nav_jps.jai";
+#load "nav_mesh_editor.jai";
 #load "nav_setup.jai";
 #load "path_smoothing.jai";
 #load "path_visualizer.jai";
