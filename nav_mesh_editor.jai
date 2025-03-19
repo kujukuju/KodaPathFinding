@@ -60,58 +60,8 @@ nav_mesh_editor_update :: () {
     delta_middle_mouse := middle_mouse && !last_middle_mouse;
     last_middle_mouse = middle_mouse;
 
-    if #complete editor.state == {
-        case .None;
-            if delta_mouse_left {
-                editor.state = .CreatingPolygon;
-                polygon := array_add(*editor.polygons);
-                polygon.id = editor.next_id;
-                editor.next_id += 1;
-
-                nav_mesh_add_point(current_point);
-            } else if delta_middle_mouse {
-                mouse_ray := Ray3.{camera.position, get_forward_vector(camera)};
-
-                min_polygon_index := -1;
-                min_polygon_dist := FLOAT32_MAX;
-                for polygon: editor.polygons {
-                    polygon_hit, polygon_dist := ray_polygon_distance(mouse_ray, polygon);
-                    if polygon_hit && polygon_dist < min_polygon_dist {
-                        min_polygon_index = it_index;
-                        min_polygon_dist = polygon_dist;
-                    }
-                }
-
-                if min_polygon_index >= 0 {
-                    array_ordered_remove_by_index(*editor.polygons, min_polygon_index);
-                }
-            }
-
-        case .CreatingPolygon;
-            if delta_mouse_left {
-                polygon := editor.polygons[editor.polygons.count - 1];
-                if polygon.points[0] == current_point {
-                    editor.state = .None;
-                } else {
-                    nav_mesh_add_point(current_point);
-                }
-            } else if delta_mouse_right {
-                editor.state = .None;
-            } else if delta_middle_mouse {
-                editor.state = .None;
-                editor.polygons.count -= 1;
-            }
-    }
-}
-
-nav_mesh_editor_render :: () {
-    #import "GL";
-
-    if !nav_mesh_editor_enabled {
-        return;
-    }
-
     raw_point = nav_mesh_get_point();
+    last_point = current_point;
     current_point = raw_point;
     snap_point, snap_point_found := nav_mesh_get_snap_point();
     if snap_point_found {
@@ -128,6 +78,122 @@ nav_mesh_editor_render :: () {
         if distance(corrected_point, current_point) > 0.01 {
             current_point = corrected_point;
         }
+    }
+
+    if dragging && !mouse_down_right {
+        dragging = false;
+    }
+
+    if #complete editor.state == {
+        case .None;
+            if delta_mouse_left {
+                // cannot start inside another polygon
+                polygon, polygon_found := nav_mesh_get_snap_polygon(current_point, 0.2);
+                if !polygon_found {
+                    editor.state = .CreatingPolygon;
+                    polygon := array_add(*editor.polygons);
+                    polygon.id = editor.next_id;
+                    editor.next_id += 1;
+
+                    nav_mesh_add_point(current_point);
+                }
+            } else if delta_middle_mouse {
+                polygon, polygon_found := nav_mesh_get_snap_polygon();
+                if polygon_found {
+                    for editor_polygon: editor.polygons {
+                        if editor_polygon.id == polygon.id {
+                            array_ordered_remove_by_index(*editor.polygons, it_index);
+                            break;
+                        }
+                    }
+                }
+            } else if delta_mouse_right {
+                snap_point, snap_point_found := nav_mesh_get_snap_point();
+                if snap_point_found {
+                    dragging = true;
+                    dragging_points = .[snap_point, snap_point];
+                } else {
+                    edge_point, edge_point1, edge_point2, edge_point_found := nav_mesh_get_snap_edge();
+                    if edge_point_found {
+                        dragging = true;
+                        dragging_points = .[edge_point1, edge_point2];
+                    }
+                }
+            } else if mouse_down_right {
+                if dragging {
+                    new_dragging_points := dragging_points;
+                    new_dragging_points[0] += current_point - last_point;
+                    new_dragging_points[1] += current_point - last_point;
+
+                    invalidated_something := false;
+
+                    for *polygon: editor.polygons {
+                        for i: 0..polygon.count - 1 {
+                            if polygon.points[i] == dragging_points[0] {
+                                polygon.points[i] = new_dragging_points[0];
+                            } else if polygon.points[i] == dragging_points[1] {
+                                polygon.points[i] = new_dragging_points[1];
+                            }
+                        }
+
+                        if !is_polygon_convex(polygon.*) {
+                            invalidated_something = true;
+                            break;
+                        }
+                    }
+
+                    if invalidated_something {
+                        for *polygon: editor.polygons {
+                            for i: 0..polygon.count - 1 {
+                                if polygon.points[i] == new_dragging_points[0] {
+                                    polygon.points[i] = dragging_points[0];
+                                } else if polygon.points[i] == new_dragging_points[1] {
+                                    polygon.points[i] = dragging_points[1];
+                                }
+                            }
+                        }
+
+                        // current_point = last_point;
+                    } else {
+                        dragging_points = new_dragging_points;
+                    }
+                }
+            }
+
+        case .CreatingPolygon;
+            if delta_mouse_left {
+                polygon := editor.polygons[editor.polygons.count - 1];
+                if polygon.points[0] == current_point {
+                    editor.state = .None;
+
+                    if polygon.count < 3 {
+                        editor.polygons.count -= 1;
+                    }
+                } else {
+                    polygon, polygon_found := nav_mesh_get_snap_polygon(current_point, 0.2, ignore_last_polygon = true);
+                    if !polygon_found {
+                        nav_mesh_add_point(current_point);
+                    }
+                }
+            } else if delta_mouse_right {
+                editor.state = .None;
+
+                if editor.polygons[editor.polygons.count - 1].count < 3 {
+                    editor.polygons.count -= 1;
+                }
+            } else if delta_middle_mouse {
+                editor.state = .None;
+
+                editor.polygons.count -= 1;
+            }
+    }
+}
+
+nav_mesh_editor_render :: () {
+    #import "GL";
+
+    if !nav_mesh_editor_enabled {
+        return;
     }
 
     nav_mesh_editor_update();
@@ -333,6 +399,10 @@ nav_mesh_correct_polygon_point :: (point: Vector3) -> Vector3 {
 }
 
 nav_mesh_get_snap_point :: () -> Vector3, bool {
+    if dragging {
+        return .{}, false;
+    }
+
     ray := Ray3.{camera.position, get_forward_vector(camera)};
 
     min_point: Vector3;
@@ -362,6 +432,10 @@ nav_mesh_get_snap_point :: () -> Vector3, bool {
 }
 
 nav_mesh_get_snap_edge :: () -> Vector3, Vector3, Vector3, bool {
+    if dragging {
+        return .{}, .{}, .{}, false;
+    }
+
     ray := Ray3.{camera.position, get_forward_vector(camera)};
 
     min_point: Vector3;
@@ -408,6 +482,52 @@ nav_mesh_get_snap_edge :: () -> Vector3, Vector3, Vector3, bool {
     return .{}, .{}, .{}, false;
 }
 
+nav_mesh_get_snap_polygon :: (point: Vector3, distance: float, ignore_last_polygon: bool = false) -> NavMeshPolygon, bool {
+    min_polygon: NavMeshPolygon;
+    min_dist := FLOAT32_MAX;
+
+    for polygon: editor.polygons {
+        if ignore_last_polygon && it_index == editor.polygons.count - 1 {
+            continue;
+        }
+
+        hit, dist := point_polygon_distance(point, polygon);
+
+        if hit && dist < min_dist && dist < distance {
+            min_polygon = polygon;
+            min_dist = dist;
+        }
+    }
+
+    if min_dist < FLOAT32_MAX {
+        return min_polygon, true;
+    }
+
+    return .{}, false;
+}
+
+nav_mesh_get_snap_polygon :: () -> NavMeshPolygon, bool {
+    ray := Ray3.{camera.position, get_forward_vector(camera)};
+
+    min_polygon: NavMeshPolygon;
+    min_dist := FLOAT32_MAX;
+
+    for polygon: editor.polygons {
+        hit, dist := ray_polygon_distance(ray, polygon);
+
+        if hit && dist < min_dist {
+            min_polygon = polygon;
+            min_dist = dist;
+        }
+    }
+
+    if min_dist < FLOAT32_MAX {
+        return min_polygon, true;
+    }
+
+    return .{}, false;
+}
+
 ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
     polygon_plane := get_polygon_plane(polygon);
     polygon_plane_point := intersection_simple(polygon_plane, ray);
@@ -419,16 +539,24 @@ ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
     return false, 0;
 }
 
+point_polygon_distance :: (point: Vector3, polygon: NavMeshPolygon) -> bool, float {
+    polygon_plane := get_polygon_plane(polygon);
+    polygon_plane_point := nearest_point(polygon_plane, point);
+
+    if is_point_inside_polygon(polygon, polygon_plane_point) {
+        return true, distance(polygon_plane_point, point);
+    }
+
+    return false, 0;
+}
+
 is_point_inside_polygon :: (polygon: NavMeshPolygon, point: Vector3) -> bool {
     polygon_normal := get_polygon_normal(polygon);
     if length(polygon_normal) == 0 {
         return false;
     }
 
-    i := 0;
-    while i < polygon.count {
-        defer i += 1;
-
+    for i: 0..polygon.count - 1 {
         line1 := Line3.{polygon.points[i], polygon.points[(i + 1) % polygon.count]};
         line2 := Line3.{polygon.points[(i + 1) % polygon.count], point};
 
@@ -438,6 +566,29 @@ is_point_inside_polygon :: (polygon: NavMeshPolygon, point: Vector3) -> bool {
         point_normal := cross(line_dir1, line_dir2);
 
         if dot(polygon_normal, point_normal) < 0.00001 {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+is_polygon_convex :: (polygon: NavMeshPolygon) -> bool {
+    if polygon.count < 3 {
+        return false;
+    }
+
+    polygon_normal := get_polygon_normal(polygon);
+
+    for i: 0..polygon.count - 1 {
+        line1 := Line3.{polygon.points[i], polygon.points[(i + 1) % polygon.count]};
+        line2 := Line3.{polygon.points[(i + 1) % polygon.count], polygon.points[(i + 2) % polygon.count]};
+
+        line_dir1 := normalize(line1.p2 - line1.p1);
+        line_dir2 := normalize(line2.p2 - line2.p1);
+
+        line_normal := cross(line_dir1, line_dir2);
+        if dot(line_normal, polygon_normal) < -0.00001 {
             return false;
         }
     }
@@ -461,10 +612,7 @@ get_polygon_normal :: (polygon: NavMeshPolygon) -> Vector3 {
         return .{};
     }
 
-    i := 0;
-    while i < polygon.count - 2 {
-        defer i += 1;
-
+    for i: 0..polygon.count - 1 {
         line1 := Line3.{polygon.points[i], polygon.points[(i + 1) % polygon.count]};
         line2 := Line3.{polygon.points[(i + 1) % polygon.count], polygon.points[(i + 2) % polygon.count]};
 
@@ -496,7 +644,6 @@ nav_mesh_add_point :: (point: Vector3) {
 
     polygon := *editor.polygons[editor.polygons.count - 1];
     if polygon.count == 16 {
-        assert(false, "Invalid editing polygon.\n");
         return;
     }
 
@@ -510,10 +657,14 @@ nav_mesh_get_point :: () -> Vector3 {
     return point;
 }
 
+dragging: bool;
+dragging_points: [2] Vector3;
+
 color_seed: u64;
 
 camera_forward: Vector3;
 raw_point: Vector3;
+last_point: Vector3;
 current_point: Vector3;
 
 editor: NavMeshEditor;
