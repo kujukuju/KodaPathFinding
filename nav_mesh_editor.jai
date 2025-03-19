@@ -23,7 +23,6 @@ NavMeshPolygon :: struct {
 // drag vertices with convex checking
 // when you connect a polygon to an edge and it can close itself using those edge loops, it will
 // while creating polygon need to be able to click on edge and create a vertex on that edge, so snap the edge in half
-//
 
 nav_mesh_editor_toggle :: () {
     nav_mesh_editor_enabled = !nav_mesh_editor_enabled;
@@ -114,9 +113,21 @@ nav_mesh_editor_render :: () {
 
     raw_point = nav_mesh_get_point();
     current_point = raw_point;
-    current_point = nav_mesh_snap_polygon_point(current_point);
+    snap_point, snap_point_found := nav_mesh_get_snap_point();
+    if snap_point_found {
+        current_point = snap_point;
+    } else {
+        edge_point, edge_point1, edge_point2, edge_point_found := nav_mesh_get_snap_edge();
+        if edge_point_found {
+            current_point = edge_point;
+        }
+    }
+
     if editor.state == .CreatingPolygon {
-        current_point = nav_mesh_correct_polygon_point(current_point);
+        corrected_point := nav_mesh_correct_polygon_point(current_point);
+        if distance(corrected_point, current_point) > 0.01 {
+            current_point = corrected_point;
+        }
     }
 
     nav_mesh_editor_update();
@@ -135,10 +146,13 @@ nav_mesh_editor_render :: () {
 
     random_seed(color_seed);
 
+    last_color: Vector3;
+
     for polygon: editor.polygons {
         hue := random_get_zero_to_one_open();
         rgb: Vector3;
         rgb.x, rgb.y, rgb.z = hsv_to_rgb(hue * 360.0, 0.34, 0.74);
+        last_color = rgb;
 
         for i: 1..polygon.count - 2 {
             a := polygon.points[0];
@@ -160,17 +174,13 @@ nav_mesh_editor_render :: () {
     }
 
     if editor.state == .CreatingPolygon {
-        hue := random_get_zero_to_one_open();
-        rgb: Vector3;
-        rgb.x, rgb.y, rgb.z = hsv_to_rgb(hue * 360.0, 0.34, 0.74);
-
         polygon := editor.polygons[editor.polygons.count - 1];
         a := polygon.points[0];
         b := polygon.points[polygon.count - 1];
         c := current_point;
 
         array_add(*triangles, a, b, c);
-        array_add(*colors, rgb, rgb, rgb);
+        array_add(*colors, last_color, last_color, last_color);
     }
 
     glEnable(GL_POLYGON_OFFSET_FILL);
@@ -181,11 +191,12 @@ nav_mesh_editor_render :: () {
         set_depth_func_scope(.GreaterEqual);
         set_depth_write_scope(false);
 
-        nav_mesh_editor_draw(0.5);
+        nav_mesh_editor_draw(0.25);
     }
 
     {
         set_depth_func_scope(.LessEqual);
+        set_depth_write_scope(false);
 
         nav_mesh_editor_draw(1.0);
     }
@@ -321,28 +332,80 @@ nav_mesh_correct_polygon_point :: (point: Vector3) -> Vector3 {
     return corrected_point;
 }
 
-nav_mesh_snap_polygon_point :: (point: Vector3) -> Vector3 {
-    // TODO do this better
-    SNAP_DISTANCE :: 0.4;
-    polygon_point_dist := SNAP_DISTANCE;
-    polygon_point: Vector3;
+nav_mesh_get_snap_point :: () -> Vector3, bool {
+    ray := Ray3.{camera.position, get_forward_vector(camera)};
+
+    min_point: Vector3;
+    min_dist := FLOAT32_MAX;
+
+    // TODO better
     for polygon: editor.polygons {
         for i: 0..polygon.count - 1 {
-            current_point := polygon.points[i];
-            current_point_dist := distance(current_point, point);
+            point := polygon.points[i];
 
-            if current_point_dist < polygon_point_dist {
-                polygon_point_dist = current_point_dist;
-                polygon_point = current_point;
+            nearest_ray_dist := distance(nearest_point(ray, point), point);
+            if nearest_ray_dist < 0.4 {
+                camera_dist := distance(camera.position, point);
+                if camera_dist < min_dist {
+                    min_point = point;
+                    min_dist = camera_dist;
+                }
             }
         }
     }
 
-    if polygon_point_dist < SNAP_DISTANCE {
-        return polygon_point;
+    if min_dist < FLOAT32_MAX {
+        return min_point, true;
     }
 
-    return point;
+    return .{}, false;
+}
+
+nav_mesh_get_snap_edge :: () -> Vector3, Vector3, Vector3, bool {
+    ray := Ray3.{camera.position, get_forward_vector(camera)};
+
+    min_point: Vector3;
+    min_point1: Vector3;
+    min_point2: Vector3;
+    min_dist := FLOAT32_MAX;
+
+    // TODO better
+    for polygon: editor.polygons {
+        // don't snap to currently editing polygon
+        if editor.state == .CreatingPolygon && it_index == editor.polygons.count - 1 {
+            continue;
+        }
+
+        for i: 0..polygon.count - 1 {
+            point1 := polygon.points[i];
+            point2 := polygon.points[(i + 1) % polygon.count];
+
+            polygon_line := Line3.{point1, point2};
+            if distance(polygon_line.p1, polygon_line.p2) < 0.001 {
+                continue;
+            }
+
+            polygon_point := nearest_point(polygon_line, ray);
+            ray_point := nearest_point(ray, polygon_point);
+
+            nearest_ray_dist := distance(polygon_point, ray_point);
+            if nearest_ray_dist < 0.4 {
+                camera_dist := distance(camera.position, polygon_point);
+                if camera_dist < min_dist {
+                    min_point = polygon_point;
+                    min_point1 = point1;
+                    min_point2 = point2;
+                    min_dist = camera_dist;
+                }
+            }
+        }
+    }
+
+    if min_dist < FLOAT32_MAX {
+        return min_point, min_point1, min_point2, true;
+    }
+
+    return .{}, .{}, .{}, false;
 }
 
 ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
