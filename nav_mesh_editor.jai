@@ -100,7 +100,7 @@ nav_mesh_editor_update :: () {
     if editor.state == .CreatingPolygon && !concave_polygon {
         corrected_point := nav_mesh_correct_polygon_point(current_point);
         if distance(corrected_point, current_point) > 0.01 {
-            current_point = corrected_point;
+            current_point = nav_mesh_correct_polygon_point(raw_point);
 
             // no snaping
             vertex_point_found = false;
@@ -451,7 +451,9 @@ nav_save :: (name: string) {
 } @command
 
 nav_load :: (name: string) {
+    print("%\n", name);
     file_string, success := read_entire_file(name);
+    print("% %\n", file_string.count, success);
     if success {
         bytes: [] u8;
         bytes.data = file_string.data;
@@ -484,7 +486,9 @@ nav_mesh_concave_to_triangles :: () -> [] NavMeshPolygon {
     remaining := array_copy(concave_polygon_points,, temp);
 
     while remaining.count >= 3 {
-        ear_found := false;
+        best_triangle: Triangle3;
+        best_triangle_heuristic := 0.0;
+        best_triangle_remove_index := -1;
 
         i := 0;
         while vertex_loop := i < remaining.count {
@@ -495,8 +499,8 @@ nav_mesh_concave_to_triangles :: () -> [] NavMeshPolygon {
 
             triangle: Triangle3;
             triangle.a = remaining[i];
-            triangle.b = remaining[i1];
-            triangle.c = remaining[i2];
+            triangle.b = remaining[(i + 1) % remaining.count];
+            triangle.c = remaining[(i + 2) % remaining.count];
 
             // it must be convex
             if dot(get_normal(triangle), expected_normal) < 0.0001 {
@@ -514,15 +518,25 @@ nav_mesh_concave_to_triangles :: () -> [] NavMeshPolygon {
                 }
             }
 
-            ear_found = true;
+            a := area(triangle);
+            p := perimeter(triangle);
 
-            array_add(*triangles, triangle);
-            array_ordered_remove_by_index(*remaining, i1);
+            heuristic := 0.0;
+            if a > 0 && p > 0 {
+                heuristic = sqrt(sqrt(a)) / p;
+            }
 
-            break;
+            if heuristic >= best_triangle_heuristic {
+                best_triangle = triangle;
+                best_triangle_heuristic = heuristic;
+                best_triangle_remove_index = (i + 1) % remaining.count;
+            }
         }
 
-        if !ear_found {
+        if best_triangle_remove_index >= 0 {
+            array_add(*triangles, best_triangle);
+            array_ordered_remove_by_index(*remaining, best_triangle_remove_index);
+        } else {
             return .[];
         }
     }
