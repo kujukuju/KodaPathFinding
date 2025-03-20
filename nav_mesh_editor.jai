@@ -35,6 +35,7 @@ nav_mesh_editor_toggle :: () {
 
     if nav_mesh_editor_enabled {
         color_seed = random_get();
+        nav_load();
     }
 }
 
@@ -51,6 +52,10 @@ nav_mesh_set_inputs :: (raw_mouse_left: bool, raw_mouse_right: bool, raw_middle_
     mouse_down_right = raw_mouse_right;
     middle_mouse = raw_middle_mouse;
     shift = raw_shift;
+}
+
+nav_mesh_set_frustum :: (raw_frustum: Frustum) {
+    frustum = raw_frustum;
 }
 
 nav_mesh_set_camera :: (scene_camera: Camera3) {
@@ -114,7 +119,7 @@ nav_mesh_editor_update :: () {
 
     last_state := editor.state;
     defer if editor.state == .None && editor.state != last_state {
-        nav_save(to_lower_copy(tprint("%.temp.nav", context.selected_level),, temp));
+        nav_save(to_lower_copy(tprint("raw/%.temp.nav", context.selected_level),, temp));
     }
 
     if #complete editor.state == {
@@ -351,6 +356,12 @@ nav_mesh_editor_render :: () {
             b := polygon.points[i];
             c := polygon.points[i + 1];
 
+            center := a / 3.0 + b / 3.0 + c / 3.0;
+            radius := max(distance(center, a), distance(center, b), distance(center, c));
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
+
             array_add(*triangles, a, b, c);
             array_add(*colors, rgb, rgb, rgb);
         }
@@ -358,6 +369,12 @@ nav_mesh_editor_render :: () {
         for i: 0..polygon.count - 1 {
             a := polygon.points[i];
             b := polygon.points[(i + 1) % polygon.count];
+
+            center := a / 2.0 + b / 2.0;
+            radius := distance(a, b);
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
 
             array_add(*lines, a, b);
             array_add(*thicknesses, thickness);
@@ -378,8 +395,10 @@ nav_mesh_editor_render :: () {
                 array_add(*thicknesses, 0.04);
             }
         } else if editor.polygons.count > 0 {
-            lines.count -= 2;
-            thicknesses.count -= 1;
+            if lines.count >= 2 {
+                lines.count -= 2;
+                thicknesses.count -= 1;
+            }
 
             polygon := editor.polygons[editor.polygons.count - 1];
             a := polygon.points[0];
@@ -415,13 +434,7 @@ nav_mesh_editor_render :: () {
 nav_mesh_editor_draw :: (alpha: float) #expand {
     draw_triangles(`triangles, `colors, color = .{1, 1, 1, alpha});
 
-    // TODO draw lines
-    i := 0;
-    while i < `lines.count {
-        defer i += 2;
-
-        draw_line_mesh(`lines[i], `lines[(i + 1) % `lines.count], `thicknesses[i / 2], color = .{0, 0, 0, alpha});
-    }
+    draw_lines_mesh(`lines, `thicknesses, color = .{0, 0, 0, alpha});
 
     draw_spheres(`points, .{0.05, 0.05, 0.05}, color = .{1, 1, 1, alpha});
 
@@ -433,9 +446,11 @@ nav_mesh_editor_render_interface :: () {
     if !nav_mesh_editor_enabled {
         return;
     }
-
-
 }
+
+nav_save :: () {
+    nav_save(to_lower_copy(tprint("assets/%.nav", context.selected_level),, temp));
+} @command
 
 nav_save :: (name: string) {
     bytes: [..] u8;
@@ -450,10 +465,12 @@ nav_save :: (name: string) {
     }
 } @command
 
+nav_load :: () {
+    nav_load(to_lower_copy(tprint("assets/%.nav", context.selected_level),, temp));
+} @command
+
 nav_load :: (name: string) {
-    print("%\n", name);
-    file_string, success := read_entire_file(name);
-    print("% %\n", file_string.count, success);
+    file_string, success := read_entire_file(name, log_errors = false);
     if success {
         bytes: [] u8;
         bytes.data = file_string.data;
@@ -815,6 +832,22 @@ nav_mesh_get_snap_point :: () -> Vector3, bool {
         }
     }
 
+    for point: concave_polygon_points {
+        // don't snap to the currently dragging point
+        if dragging && dragging_points[0] == dragging_points[1] && dragging_points[0] == point {
+            continue;
+        }
+
+        nearest_ray_dist := distance(nearest_point(ray, point), point);
+        if nearest_ray_dist < snap_dist {
+            camera_dist := distance(camera.position, point);
+            if camera_dist < min_dist {
+                min_point = point;
+                min_dist = camera_dist;
+            }
+        }
+    }
+
     if min_dist < FLOAT32_MAX {
         return min_point, true;
     }
@@ -920,7 +953,8 @@ nav_mesh_get_snap_polygon :: () -> NavMeshPolygon, bool {
 }
 
 ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
-    polygon_plane := get_polygon_plane(polygon);
+    polygon_plane, polygon_plane_valid := get_polygon_plane(polygon);
+    if !polygon_plane_valid return false, 0;
     polygon_plane_point := intersection_simple(polygon_plane, ray);
 
     if is_point_inside_polygon(polygon, polygon_plane_point) {
@@ -931,7 +965,8 @@ ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
 }
 
 point_polygon_distance :: (point: Vector3, polygon: NavMeshPolygon) -> bool, float {
-    polygon_plane := get_polygon_plane(polygon);
+    polygon_plane, polygon_plane_valid := get_polygon_plane(polygon);
+    if !polygon_plane_valid return false, 0;
     polygon_plane_point := nearest_point(polygon_plane, point);
 
     if is_point_inside_polygon(polygon, polygon_plane_point) {
@@ -987,13 +1022,13 @@ is_polygon_convex :: (polygon: NavMeshPolygon) -> bool {
     return true;
 }
 
-get_polygon_plane :: (polygon: NavMeshPolygon) -> Plane3 {
+get_polygon_plane :: (polygon: NavMeshPolygon) -> Plane3, bool {
     normal := get_polygon_normal(polygon);
     if length(normal) == 0 {
-        return .{};
+        return .{}, false;
     }
 
-    return create_plane3(polygon.points[0], normal);
+    return create_plane3(polygon.points[0], normal), true;
 }
 
 get_polygon_normal :: (polygon: NavMeshPolygon) -> Vector3 {
@@ -1092,6 +1127,8 @@ mouse_down_left: bool;
 mouse_down_right: bool;
 middle_mouse: bool;
 shift: bool;
+
+frustum: Frustum;
 
 concave_polygon: bool;
 concave_polygon_points: [..] Vector3;
