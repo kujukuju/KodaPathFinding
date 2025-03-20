@@ -78,6 +78,21 @@ nav_mesh_editor_update :: () {
     if editor.state == .None {
         concave_polygon = shift;
         concave_polygon_points.count = 0;
+
+        // remove degenerate polygons
+        did_remove := true;
+        while did_remove {
+            did_remove = false;
+
+            for polygon: editor.polygons {
+                if get_polygon_area(polygon) < 0.1 {
+                    did_remove = true;
+
+                    array_ordered_remove_by_index(*editor.polygons, it_index);
+                    break;
+                }
+            }
+        }
     }
 
     concave_convex_triangles := nav_mesh_concave_to_triangles();
@@ -119,7 +134,7 @@ nav_mesh_editor_update :: () {
 
     last_state := editor.state;
     defer if editor.state == .None && editor.state != last_state {
-        nav_save(to_lower_copy(tprint("raw/%.temp.nav", context.selected_level),, temp));
+        nav_save(to_lower_copy(tprint("raw/nav/%.temp.nav", context.selected_level),, temp));
     }
 
     if #complete editor.state == {
@@ -349,6 +364,10 @@ nav_mesh_editor_render :: () {
             thickness = 0.04;
         }
 
+        if !is_polygon_convex(polygon) {
+            rgb = .{1, 0, 0};
+        }
+
         last_color = rgb;
 
         for i: 1..polygon.count - 2 {
@@ -449,7 +468,7 @@ nav_mesh_editor_render_interface :: () {
 }
 
 nav_save :: () {
-    nav_save(to_lower_copy(tprint("assets/%.nav", context.selected_level),, temp));
+    nav_save(to_lower_copy(tprint("raw/nav/%.nav", context.selected_level),, temp));
 } @command
 
 nav_save :: (name: string) {
@@ -466,7 +485,7 @@ nav_save :: (name: string) {
 } @command
 
 nav_load :: () {
-    nav_load(to_lower_copy(tprint("assets/%.nav", context.selected_level),, temp));
+    nav_load(to_lower_copy(tprint("raw/nav/%.nav", context.selected_level),, temp));
 } @command
 
 nav_load :: (name: string) {
@@ -1020,6 +1039,14 @@ is_polygon_convex :: (polygon: NavMeshPolygon) -> bool {
     }
 
     return true;
+}
+
+get_polygon_area :: (polygon: NavMeshPolygon) -> float {
+    vertices: [] Vector3;
+    vertices.data = polygon.points.data;
+    vertices.count = polygon.count;
+
+    return area(vertices);
 }
 
 get_polygon_plane :: (polygon: NavMeshPolygon) -> Plane3, bool {
