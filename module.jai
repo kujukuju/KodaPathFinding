@@ -3,7 +3,10 @@
 #load "grid_generator.jai";
 #load "jump_sparse_grid.jai";
 #load "nav_astar.jai";
+#load "nav_funnel.jai";
 #load "nav_jps.jai";
+#load "nav_mesh_astar.jai";
+#load "nav_mesh_builder.jai";
 #load "nav_mesh_editor.jai";
 #load "nav_setup.jai";
 #load "path_smoothing.jai";

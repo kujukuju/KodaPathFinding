@@ -26,10 +26,6 @@ operator == :: (a: NavMeshPolygon, b: NavMeshPolygon) -> bool {
     return matches;
 }
 
-// needed features
-// drag vertices into each other and remove them
-// auto convexify if youre holding some key
-
 nav_mesh_editor_toggle :: () {
     nav_mesh_editor_enabled = !nav_mesh_editor_enabled;
 
@@ -132,7 +128,7 @@ nav_mesh_editor_update :: () {
         dragging = false;
     }
 
-    last_state := editor.state;
+    last_state = editor.state;
     defer if editor.state == .None && editor.state != last_state {
         nav_save(to_lower_copy(tprint("raw/nav/%.temp.nav", context.selected_level),, temp));
     }
@@ -165,13 +161,10 @@ nav_mesh_editor_update :: () {
                     }
                 }
             } else if delta_middle_mouse {
-                print("middle mouse\n");
                 polygon, polygon_found := nav_mesh_get_snap_polygon();
                 if polygon_found {
-                    print("found\n");
                     for editor_polygon: editor.polygons {
                         if editor_polygon == polygon {
-                            print("removing %\n", it_index);
                             array_ordered_remove_by_index(*editor.polygons, it_index);
                             break;
                         }
@@ -431,29 +424,38 @@ nav_mesh_editor_render :: () {
         }
     }
 
+    set_lines_mesh(lines, thicknesses);
+    set_triangles_colors(triangles, colors);
+
+    // if get_lines_mesh_count() != lines.count / 2 || last_state == .CreatingPolygon {
+    //     set_lines_mesh(lines, thicknesses);
+    // }
+    // if get_triangles_colors_vertices_count() != triangles.count || last_state == .CreatingPolygon {
+    //     set_triangles_colors(triangles, colors);
+    // }
+
     glEnable(GL_POLYGON_OFFSET_FILL);
     defer glDisable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(-0.5, -0.5);
 
+    set_depth_write_scope(false);
+
     {
         set_depth_func_scope(.GreaterEqual);
-        set_depth_write_scope(false);
-
         nav_mesh_editor_draw(0.25);
     }
 
     {
         set_depth_func_scope(.LessEqual);
-        set_depth_write_scope(false);
-
         nav_mesh_editor_draw(1.0);
     }
 }
 
 nav_mesh_editor_draw :: (alpha: float) #expand {
-    draw_triangles(`triangles, `colors, color = .{1, 1, 1, alpha});
+    draw_triangles_colors(color = .{1, 1, 1, alpha});
 
-    draw_lines_mesh(`lines, `thicknesses, color = .{0, 0, 0, alpha});
+    draw_lines_mesh(.{0, 0, 0, alpha});
+    // draw_lines_mesh(`lines, `thicknesses, color = .{0, 0, 0, alpha});
 
     draw_spheres(`points, .{0.05, 0.05, 0.05}, color = .{1, 1, 1, alpha});
 
@@ -465,6 +467,11 @@ nav_mesh_editor_render_interface :: () {
     if !nav_mesh_editor_enabled {
         return;
     }
+}
+
+nav_mesh_editor_get_nav_mesh :: () -> NavMesh {
+    nav_mesh_remove_duplicates();
+    return generate_nav_mesh(editor.polygons);
 }
 
 nav_save :: () {
@@ -971,6 +978,46 @@ nav_mesh_get_snap_polygon :: () -> NavMeshPolygon, bool {
     return .{}, false;
 }
 
+nav_mesh_remove_duplicates :: () {
+    found_duplicate := true;
+    while duplicate_loop := found_duplicate {
+        found_duplicate = false;
+
+        for a: 0..editor.polygons.count - 1 {
+            for b: 0..editor.polygons.count - 1 {
+                if a == b || editor.polygons[a].count < editor.polygons[b].count {
+                    // we don't want to match with ourselves or remove a polygon with more vertices than us
+                    continue;
+                }
+
+                is_duplicate := true;
+
+                for bi: 0..editor.polygons[b].count - 1 {
+                    point_b := editor.polygons[b].points[bi];
+
+                    for ai: 0..editor.polygons[a].count - 1 {
+                        point_a := editor.polygons[a].points[ai];
+
+                        if point_a == point_b {
+                            continue bi;
+                        }
+                    }
+
+                    is_duplicate = false;
+                    break;
+                }
+
+                if is_duplicate {
+                    // if we get to this point then b is a duplicate of a
+                    array_ordered_remove_by_index(*editor.polygons, b);
+                    found_duplicate = true;
+                    continue duplicate_loop;
+                }
+            }
+        }
+    }
+}
+
 ray_polygon_distance :: (ray: Ray3, polygon: NavMeshPolygon) -> bool, float {
     polygon_plane, polygon_plane_valid := get_polygon_plane(polygon);
     if !polygon_plane_valid return false, 0;
@@ -1159,6 +1206,8 @@ frustum: Frustum;
 
 concave_polygon: bool;
 concave_polygon_points: [..] Vector3;
+
+last_state: EditorState;
 
 #import "KodaJai";
 #import "JaiSerializer";
