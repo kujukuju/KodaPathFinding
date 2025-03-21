@@ -6,7 +6,7 @@ funnel_path :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, path: [] s32) -
 
     portals: [..] [2] Vector3;
     portals.allocator = temp;
-    array_reserve(*portals, path.count - 2);
+    array_reserve(*portals, path.count - 2 + 1);
 
     for i: 0..path.count - 2 {
         node := path[i];
@@ -14,6 +14,8 @@ funnel_path :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, path: [] s32) -
         portal := get_portal(nav_mesh, node, next_node);
         array_add(*portals, portal);
     }
+
+    array_add(*portals, .[end, end]);
 
     anchors: [..] Vector3;
     anchors.allocator = temp;
@@ -30,30 +32,43 @@ funnel_path :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, path: [] s32) -
     while portal_index < portals.count {
         portal := portals[portal_index];
 
+        if left_dir == .{} {
+            left_dir = portal[1] - anchor;
+            left_dir_portal_index = portal_index;
+        }
+        if right_dir == .{} {
+            right_dir = portal[0] - anchor;
+            right_dir_portal_index = portal_index;
+        }
+
         if is_right(right_dir, portal[1] - anchor) {
-            // this is a fold
+            next_index := right_dir_portal_index + 1;
             anchor = portals[right_dir_portal_index][0];
             array_add(*anchors, anchor);
 
-            remove_first_count(*portals, right_dir_portal_index + 1);
-            left_dir = portals[0][1] - anchor;
-            right_dir = portals[0][0] - anchor;
-            left_dir_portal_index = 0;
-            right_dir_portal_index = 0;
+            left_dir = portals[next_index][1] - anchor;
+            right_dir = portals[next_index][0] - anchor;
+            left_dir_portal_index = next_index;
+            right_dir_portal_index = next_index;
 
-            portal_index = 1;
+    // print("left_dir1 %\n", left_dir);
+    // print("right_dir1 %\n", right_dir);
+
+            portal_index = next_index + 1;
         } else if is_left(left_dir, portal[0] - anchor) {
-            // this is a fold
+            next_index := left_dir_portal_index + 1;
             anchor = portals[left_dir_portal_index][1];
             array_add(*anchors, anchor);
 
-            remove_first_count(*portals, left_dir_portal_index + 1);
-            left_dir = portals[0][1] - anchor;
-            right_dir = portals[0][0] - anchor;
-            left_dir_portal_index = 0;
-            right_dir_portal_index = 0;
+            left_dir = portals[next_index][1] - anchor;
+            right_dir = portals[next_index][0] - anchor;
+            left_dir_portal_index = next_index;
+            right_dir_portal_index = next_index;
 
-            portal_index = 1;
+    // print("left_dir2 %\n", left_dir);
+    // print("right_dir2 %\n", right_dir);
+
+            portal_index = next_index + 1;
         } else {
             if is_right(left_dir, portal[1] - anchor) {
                 left_dir = portal[1] - anchor;
@@ -98,12 +113,12 @@ funnel_render :: () {
 // portal_right_dir: Vector3;
 // portal_most_recent_portal: [2] Vector3;
 
-remove_first_count :: (arr: *[] $T, count: int) {
-    // TODO bad and slow
-    for i: 0..count - 1 {
-        array_ordered_remove_by_index(arr, 0);
-    }
-}
+// remove_first_count :: (arr: *[] $T, count: int) {
+//     // TODO bad and slow
+//     for i: 0..count - 1 {
+//         array_ordered_remove_by_index(arr, 0);
+//     }
+// }
 
 get_portal :: (nav_mesh: NavMesh, node: s32, next_node: s32) -> [2] Vector3 {
     for connected_node: nav_mesh.nodes[node] {

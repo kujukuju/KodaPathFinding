@@ -505,6 +505,8 @@ nav_load :: (name: string) {
         editor = .{};
         serializer_read(bytes, *editor);
 
+        nav_mesh_remove_duplicates();
+
         console_print_callback("Loaded nav mesh.");
     } else {
         console_print_callback("Could not load nav mesh.");
@@ -830,7 +832,7 @@ nav_mesh_get_snap_point :: () -> Vector3, bool {
     //     return .{}, false;
     // }
 
-    snap_dist := ifx dragging then 0.1 else 0.4;
+    snap_dist := ifx dragging then 0.05 else 0.4;
 
     ray := Ray3.{camera.position, get_forward_vector(camera)};
 
