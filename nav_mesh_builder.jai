@@ -8,6 +8,7 @@ NavMesh :: struct {
 
     centers: [] Vector3;
     flags: [] u64;
+    weights: [] u32;
 
     nodes_buffer: [..] s32;
     portals_buffer: [..] [2] Vector3;
@@ -23,6 +24,7 @@ generate_nav_mesh :: (polygons: [] NavMeshPolygon) -> NavMesh {
     nav_mesh.points = NewArray(polygons.count, [] Vector3);
     nav_mesh.centers = NewArray(polygons.count, Vector3);
     nav_mesh.flags = NewArray(polygons.count, u64);
+    nav_mesh.weights = NewArray(polygons.count, u32);
 
     // centers
     for polygon, polygon_index: polygons {
@@ -35,6 +37,11 @@ generate_nav_mesh :: (polygons: [] NavMeshPolygon) -> NavMesh {
     // flags
     for polygon, polygon_index: polygons {
         nav_mesh.flags[polygon_index] = polygon.level_flags;
+    }
+
+    // weights
+    for polygon, polygon_index: polygons {
+        nav_mesh.weights[polygon_index] = max(polygon.weight, 1);
     }
 
     // points

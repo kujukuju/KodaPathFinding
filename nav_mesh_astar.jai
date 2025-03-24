@@ -100,18 +100,14 @@ find_path_a_star :: (nav_mesh: NavMesh, start_node: s32, end_node: s32, flags: u
                 continue;
             }
 
-            adjacent_distance := distance(nav_mesh.centers[adjacent_node], entry_center);
+            adjacent_distance := distance(nav_mesh.centers[adjacent_node], entry_center) * nav_mesh.weights[adjacent_node];
             adjacent_heuristic := entry_heuristic + adjacent_distance;
 
-            // if visited_heuristics[adjacent_node] == 0 || adjacent_heuristic < visited_heuristics[adjacent_node] {
-            //     visited_heuristics[adjacent_node] = adjacent_heuristic;
-
-                insert(*open_queue, NodeEntry.{
-                    adjacent_node,
-                    entry_node,
-                    adjacent_heuristic,
-                });
-            // }
+            insert(*open_queue, NodeEntry.{
+                adjacent_node,
+                entry_node,
+                adjacent_heuristic,
+            });
         }
     }
 
