@@ -30,14 +30,14 @@ get_node :: (nav_mesh: NavMesh, point: Vector3) -> s32 {
     return best_node;
 }
 
-find_path_a_star :: (nav_mesh: NavMesh, start: Vector3, end: Vector3) -> [] s32 {
-    start_node := get_node(nav_mesh, start);
-    end_node := get_node(nav_mesh, end);
+find_path_a_star :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, flags: u64) -> [] s32 {
+    start_node := get_node_floor(nav_mesh, start);
+    end_node := get_node_floor(nav_mesh, end);
 
-    return find_path_a_start(nav_mesh, start, end, start_node, end_node);
+    return find_path_a_start(nav_mesh, start_node, end_node, flags);
 }
 
-find_path_a_star :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, start_node: s32, end_node: s32) -> [] s32 {
+find_path_a_star :: (nav_mesh: NavMesh, start_node: s32, end_node: s32, flags: u64) -> [] s32 {
     visited: [..] bool;
     visited.allocator = temp;
     array_resize(*visited, nav_mesh.nodes.count);
@@ -96,6 +96,10 @@ find_path_a_star :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, start_node
         }
 
         for adjacent_node: nav_mesh.nodes[entry.node] {
+            if !valid_flags(nav_mesh.flags[adjacent_node], flags) {
+                continue;
+            }
+
             adjacent_distance := distance(nav_mesh.centers[adjacent_node], entry_center);
             adjacent_heuristic := entry_heuristic + adjacent_distance;
 
@@ -112,4 +116,10 @@ find_path_a_star :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, start_node
     }
 
     return .[];
+}
+
+#scope_file
+
+valid_flags :: (node_flags: u64, user_flags: u64) -> bool {
+    return (node_flags & user_flags) == node_flags;
 }

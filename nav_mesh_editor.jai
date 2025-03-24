@@ -20,30 +20,21 @@ WeightMode :: enum {
     SameWeights;
 }
 
-EditorState :: enum {
+EditorStatePolygons :: enum {
     None :: 0;
     CreatingPolygon :: 1;
 }
 
-NavMeshEditorNew :: struct {
-    polygons: [..] NavMeshPolygonNew;
+NavMeshEditor :: struct {
+    polygons: [..] NavMeshPolygon;
 }
 
-NavMeshEditorOld :: struct {
-    state: EditorState;
-    polygons: [..] NavMeshPolygonOld;
-}
-
-NavMeshPolygonNew :: struct {
+NavMeshPolygon :: struct {
     points: [MAX_VERTS] Vector3;
     count: s32;
     weight: u32 = 1;
-    flags: u64;
-}
-
-NavMeshPolygonOld :: struct {
-    points: [MAX_VERTS] Vector3;
-    count: s32;
+    editor_flags: u64;
+    level_flags: u64;
 }
 
 NavMeshEditorFlags :: enum_flags {
@@ -94,27 +85,27 @@ nav_mesh_set_camera :: (scene_camera: Camera3) {
 }
 
 nav_mesh_set_flags :: ($T: Type) {
-    // enum_info :: type_info(T);
-    // #assert(enum_info.type == .ENUM);
-
-    // baked_values :: #run () -> [] int {
-    //     return enum_info.values;
-    // }();
-    // baked_names :: #run () -> [] string {
-    //     names := NewArray(enum_info.names.count, string);
-    //     for name: enum_info.names {
-    //         names[it_index] = tprint("%\0", name);
-    //     }
-    //     return names;
-    // }();
-
-    flag_values, flag_names = get_enum_arrays(T);
-
-    // flag_values = baked_values;
-    // flag_names = baked_names;
+    level_flag_values, level_flag_names = get_enum_arrays(T);
 }
 
 nav_mesh_editor_update :: () {
+    raw_point = nav_mesh_get_point();
+    last_point = current_point;
+    current_point = raw_point;
+
+    if #complete mode == {
+        case .Polygons;
+            nav_mesh_editor_update_polygons();
+
+        case .Weights;
+            nav_mesh_editor_update_weights();
+
+        case .Flags;
+            nav_mesh_editor_update_flags();
+    }
+}
+
+nav_mesh_editor_update_polygons :: () {
     delta_mouse_left := mouse_down_left && !last_mouse_left;
     last_mouse_left = mouse_down_left;
 
@@ -127,7 +118,7 @@ nav_mesh_editor_update :: () {
     delta_shift := shift && !last_shift;
     last_shift = shift;
 
-    if state == .None {
+    if polygon_state == .None {
         concave_polygon = shift;
         concave_polygon_points.count = 0;
 
@@ -152,9 +143,6 @@ nav_mesh_editor_update :: () {
     array_add(*editor.polygons, ..concave_convex_polygons);
     defer editor.polygons.count -= concave_convex_polygons.count;
 
-    raw_point = nav_mesh_get_point();
-    last_point = current_point;
-    current_point = raw_point;
     vertex_point, vertex_point_found := nav_mesh_get_snap_point();
     edge_point: Vector3;
     edge_point1: Vector3;
@@ -169,7 +157,7 @@ nav_mesh_editor_update :: () {
         }
     }
 
-    if state == .CreatingPolygon && !concave_polygon {
+    if polygon_state == .CreatingPolygon && !concave_polygon {
         corrected_point := nav_mesh_correct_polygon_point(current_point);
         if distance(corrected_point, current_point) > 0.01 {
             current_point = nav_mesh_correct_polygon_point(raw_point);
@@ -184,12 +172,12 @@ nav_mesh_editor_update :: () {
         dragging = false;
     }
 
-    last_state = state;
-    defer if state == .None && state != last_state {
+    last_polygon_state = polygon_state;
+    defer if polygon_state == .None && polygon_state != last_polygon_state {
         nav_save(to_lower_copy(tprint("raw/nav/%.temp.nav", context.selected_level),, temp));
     }
 
-    if #complete state == {
+    if #complete polygon_state == {
         case .None;
             if delta_mouse_left {
                 // cannot start inside another polygon
@@ -206,7 +194,7 @@ nav_mesh_editor_update :: () {
                     }
 
                     if valid {
-                        state = .CreatingPolygon;
+                        polygon_state = .CreatingPolygon;
 
                         if concave_polygon {
                             array_add(*concave_polygon_points, current_point);
@@ -300,10 +288,10 @@ nav_mesh_editor_update :: () {
                 if concave_polygon {
                     if concave_polygon_points[0] == current_point {
                         if concave_polygon_points.count < 3 {
-                            state = .None;
+                            polygon_state = .None;
                         } else {
                             if concave_convex_polygons.count > 0 {
-                                state = .None;
+                                polygon_state = .None;
                                 editor.polygons.count += concave_convex_polygons.count;
                             }
                         }
@@ -320,7 +308,7 @@ nav_mesh_editor_update :: () {
                 } else {
                     polygon := editor.polygons[editor.polygons.count - 1];
                     if polygon.points[0] == current_point {
-                        state = .None;
+                        polygon_state = .None;
 
                         if polygon.count < 3 {
                             editor.polygons.count -= 1;
@@ -342,26 +330,133 @@ nav_mesh_editor_update :: () {
             } else if delta_mouse_right {
                 if concave_polygon {
                     if concave_polygon_points.count < 3 {
-                        state = .None;
+                        polygon_state = .None;
                     } else {
                         if concave_convex_polygons.count > 0 {
-                            state = .None;
+                            polygon_state = .None;
                             editor.polygons.count += concave_convex_polygons.count;
                         }
                     }
                 } else {
-                    state = .None;
+                    polygon_state = .None;
                     if editor.polygons[editor.polygons.count - 1].count < 3 {
                         editor.polygons.count -= 1;
                     }
                 }
             } else if delta_middle_mouse {
-                state = .None;
+                polygon_state = .None;
 
                 if !concave_polygon {
                     editor.polygons.count -= 1;
                 }
             }
+    }
+}
+
+nav_mesh_editor_update_weights :: () {
+    delta_mouse_left := mouse_down_left && !last_mouse_left;
+    last_mouse_left = mouse_down_left;
+
+    delta_mouse_right := mouse_down_right && !last_mouse_right;
+    last_mouse_right = mouse_down_right;
+
+    delta_middle_mouse := middle_mouse && !last_middle_mouse;
+    last_middle_mouse = middle_mouse;
+
+    delta_shift := shift && !last_shift;
+    last_shift = shift;
+
+    if mouse_down_left {
+        polygon, polygon_found := nav_mesh_get_snap_polygon();
+        if polygon_found {
+            for *editor_polygon: editor.polygons {
+                if editor_polygon.* == polygon {
+                    editor_polygon.weight = current_weight;
+                    break;
+                }
+            }
+        }
+    } else if delta_middle_mouse {
+        polygon, polygon_found := nav_mesh_get_snap_polygon();
+        if polygon_found {
+            current_weight = polygon.weight;
+        }
+    }
+}
+
+nav_mesh_editor_update_flags :: () {
+    delta_mouse_left := mouse_down_left && !last_mouse_left;
+    last_mouse_left = mouse_down_left;
+
+    delta_mouse_right := mouse_down_right && !last_mouse_right;
+    last_mouse_right = mouse_down_right;
+
+    delta_middle_mouse := middle_mouse && !last_middle_mouse;
+    last_middle_mouse = middle_mouse;
+
+    delta_shift := shift && !last_shift;
+    last_shift = shift;
+
+    required_flags: u64;
+    if editor_flag_mode {
+        required_flags = current_editor_flags;
+    } else if level_flag_mode {
+        required_flags = current_level_flags;
+    }
+
+    if mouse_down_left {
+        polygon, polygon_found := nav_mesh_get_snap_polygon();
+        if polygon_found {
+            for *editor_polygon: editor.polygons {
+                if editor_polygon.* == polygon {
+                    if #complete editor_flag_mode == {
+                        case .None;
+                        case .Set;
+                            editor_polygon.editor_flags = current_editor_flags;
+                        case .AddRemove;
+                            editor_polygon.editor_flags |= current_editor_flags;
+                    }
+                    if #complete level_flag_mode == {
+                        case .None;
+                        case .Set;
+                            editor_polygon.level_flags = current_level_flags;
+                        case .AddRemove;
+                            editor_polygon.level_flags |= current_level_flags;
+                    }
+                    break;
+                }
+            }
+        }
+    } else if mouse_down_right {
+        polygon, polygon_found := nav_mesh_get_snap_polygon();
+        if polygon_found {
+            for *editor_polygon: editor.polygons {
+                if editor_polygon.* == polygon {
+                    if #complete editor_flag_mode == {
+                        case .None;
+                        case .Set;
+                        case .AddRemove;
+                            editor_polygon.editor_flags &= ~current_editor_flags;
+                    }
+                    if #complete level_flag_mode == {
+                        case .None;
+                        case .Set;
+                        case .AddRemove;
+                            editor_polygon.level_flags &= ~current_level_flags;
+                    }
+                    break;
+                }
+            }
+        }
+    } else if delta_middle_mouse {
+        polygon, polygon_found := nav_mesh_get_snap_polygon();
+        if polygon_found {
+            if editor_flag_mode {
+                current_editor_flags = polygon.editor_flags;
+            } else if level_flag_mode {
+                current_level_flags = polygon.level_flags;
+            }
+        }
     }
 }
 
@@ -373,6 +468,29 @@ nav_mesh_editor_render :: () {
     }
 
     nav_mesh_editor_update();
+
+    random_seed(color_seed);
+
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    defer glDisable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-0.5, -0.5);
+
+    set_depth_write_scope(false);
+
+    if #complete mode == {
+        case .Polygons;
+            nav_mesh_editor_render_polygons();
+
+        case .Weights;
+            nav_mesh_editor_render_weights();
+
+        case .Flags;
+            nav_mesh_editor_render_flags();
+    }
+}
+
+nav_mesh_editor_render_polygons :: () {
+    #import "GL";
 
     triangles: [..] Vector3;
     triangles.allocator = temp;
@@ -389,8 +507,6 @@ nav_mesh_editor_render :: () {
     points: [..] Vector3;
     points.allocator = temp;
 
-    random_seed(color_seed);
-
     last_color: Vector3;
 
     concave_convex_polygons := nav_mesh_concave_to_triangles();
@@ -398,7 +514,7 @@ nav_mesh_editor_render :: () {
     defer editor.polygons.count -= concave_convex_polygons.count;
 
     editing_count := 0;
-    if state == .CreatingPolygon {
+    if polygon_state == .CreatingPolygon {
         editing_count = max(concave_convex_polygons.count, 1);
     }
 
@@ -408,7 +524,7 @@ nav_mesh_editor_render :: () {
         rgb.x, rgb.y, rgb.z = hsv_to_rgb(hue * 360.0, 0.34, 0.74);
         thickness := 0.02;
 
-        if state == .CreatingPolygon && it_index >= editor.polygons.count - editing_count {
+        if polygon_state == .CreatingPolygon && it_index >= editor.polygons.count - editing_count {
             rgb = .{1, 1, 1};
             thickness = 0.04;
         }
@@ -451,7 +567,7 @@ nav_mesh_editor_render :: () {
         }
     }
 
-    if state == .CreatingPolygon {
+    if polygon_state == .CreatingPolygon {
         if concave_polygon {
             if concave_polygon_points.count > 0 {
                 for i: 0..concave_polygon_points.count - 2 {
@@ -483,10 +599,10 @@ nav_mesh_editor_render :: () {
     set_lines_mesh(lines, thicknesses);
     set_triangles_colors(triangles, colors);
 
-    // if get_lines_mesh_count() != lines.count / 2 || last_state == .CreatingPolygon {
+    // if get_lines_mesh_count() != lines.count / 2 || last_polygon_state == .CreatingPolygon {
     //     set_lines_mesh(lines, thicknesses);
     // }
-    // if get_triangles_colors_vertices_count() != triangles.count || last_state == .CreatingPolygon {
+    // if get_triangles_colors_vertices_count() != triangles.count || last_polygon_state == .CreatingPolygon {
     //     set_triangles_colors(triangles, colors);
     // }
 
@@ -495,6 +611,195 @@ nav_mesh_editor_render :: () {
     glPolygonOffset(-0.5, -0.5);
 
     set_depth_write_scope(false);
+
+    {
+        set_depth_func_scope(.GreaterEqual);
+        nav_mesh_editor_draw(0.25);
+    }
+
+    {
+        set_depth_func_scope(.LessEqual);
+        nav_mesh_editor_draw(1.0);
+    }
+}
+
+nav_mesh_editor_render_weights :: () {
+    triangles: [..] Vector3;
+    triangles.allocator = temp;
+
+    colors: [..] Vector3;
+    colors.allocator = temp;
+
+    lines: [..] Vector3;
+    lines.allocator = temp;
+
+    thicknesses: [..] float;
+    thicknesses.allocator = temp;
+
+    points: [..] Vector3;
+    points.allocator = temp;
+
+    thickness :: 0.02;
+
+    max_weight := 0;
+    if weight_mode == .AllWeights {
+        for polygon: editor.polygons {
+            max_weight = max(max_weight, polygon.weight);
+        }
+    }
+
+    for polygon: editor.polygons {
+        min_color :: Vector3.{185.0 / 255.0, 185.0 / 255.0, 185.0 / 255.0};
+        max_color :: Vector3.{188.0 / 255.0, 12.0 / 255.0, 220.0 / 255.0};
+        weight_color: Vector3;
+        if #complete weight_mode == {
+            case .AllWeights;
+                weight_color = min_color + (max_color - min_color) * (cast(float) (polygon.weight - 1) / max_weight);
+
+            case .SameWeights;
+                if polygon.weight == current_weight {
+                    weight_color = max_color;
+                } else {
+                    weight_color = min_color;
+                }
+        }
+
+        for i: 1..polygon.count - 2 {
+            a := polygon.points[0];
+            b := polygon.points[i];
+            c := polygon.points[i + 1];
+
+            center := a / 3.0 + b / 3.0 + c / 3.0;
+            radius := max(distance(center, a), distance(center, b), distance(center, c));
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
+
+            array_add(*triangles, a, b, c);
+            array_add(*colors, weight_color, weight_color, weight_color);
+        }
+
+        for i: 0..polygon.count - 1 {
+            a := polygon.points[i];
+            b := polygon.points[(i + 1) % polygon.count];
+
+            center := a / 2.0 + b / 2.0;
+            radius := distance(a, b);
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
+
+            array_add(*lines, a, b);
+            array_add(*thicknesses, thickness);
+
+            array_add(*points, a);
+        }
+    }
+
+    set_lines_mesh(lines, thicknesses);
+    set_triangles_colors(triangles, colors);
+
+    {
+        set_depth_func_scope(.GreaterEqual);
+        nav_mesh_editor_draw(0.25);
+    }
+
+    {
+        set_depth_func_scope(.LessEqual);
+        nav_mesh_editor_draw(1.0);
+    }
+}
+
+nav_mesh_editor_render_flags :: () {
+    triangles: [..] Vector3;
+    triangles.allocator = temp;
+
+    colors: [..] Vector3;
+    colors.allocator = temp;
+
+    lines: [..] Vector3;
+    lines.allocator = temp;
+
+    thicknesses: [..] float;
+    thicknesses.allocator = temp;
+
+    points: [..] Vector3;
+    points.allocator = temp;
+
+    thickness :: 0.02;
+
+    flag_mode: FlagMode;
+    required_flags: u64;
+    if editor_flag_mode {
+        flag_mode = editor_flag_mode;
+        required_flags = current_editor_flags;
+    } else if level_flag_mode {
+        flag_mode = level_flag_mode;
+        required_flags = current_level_flags;
+    }
+
+    for polygon: editor.polygons {
+        none_color :: Vector3.{185.0 / 255.0, 185.0 / 255.0, 185.0 / 255.0};
+        some_color :: Vector3.{214.0 / 255.0, 165.0 / 255.0, 107.0 / 255.0};
+        match_color :: Vector3.{188.0 / 255.0, 12.0 / 255.0, 220.0 / 255.0};
+        flag_color: Vector3;
+
+        polygon_flags: u64;
+        if editor_flag_mode {
+            polygon_flags = polygon.editor_flags;
+        } else if level_flag_mode {
+            polygon_flags = polygon.level_flags;
+        }
+
+        if #complete flag_mode == {
+            case .None;
+                flag_color = none_color;
+            case .Set;
+                flag_color = ifx polygon_flags == required_flags then match_color else none_color;
+            case .AddRemove;
+                if (polygon_flags & required_flags) == required_flags {
+                    flag_color = match_color;
+                } else if polygon_flags & required_flags {
+                    flag_color = some_color;
+                } else {
+                    flag_color = none_color;
+                }
+        }
+
+        for i: 1..polygon.count - 2 {
+            a := polygon.points[0];
+            b := polygon.points[i];
+            c := polygon.points[i + 1];
+
+            center := a / 3.0 + b / 3.0 + c / 3.0;
+            radius := max(distance(center, a), distance(center, b), distance(center, c));
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
+
+            array_add(*triangles, a, b, c);
+            array_add(*colors, flag_color, flag_color, flag_color);
+        }
+
+        for i: 0..polygon.count - 1 {
+            a := polygon.points[i];
+            b := polygon.points[(i + 1) % polygon.count];
+
+            center := a / 2.0 + b / 2.0;
+            radius := distance(a, b);
+            if !intersects(frustum, center, radius) {
+                continue;
+            }
+
+            array_add(*lines, a, b);
+            array_add(*thicknesses, thickness);
+
+            array_add(*points, a);
+        }
+    }
+
+    set_lines_mesh(lines, thicknesses);
+    set_triangles_colors(triangles, colors);
 
     {
         set_depth_func_scope(.GreaterEqual);
@@ -576,11 +881,13 @@ nav_mesh_editor_render_interface :: () {
             ImGui.SameLine();
             if ToggleButton("Set", *set_mode) {
                 editor_flag_mode = .Set;
+                level_flag_mode = .None;
             }
             add_remove_mode := editor_flag_mode == .AddRemove;
             ImGui.SameLine();
             if ToggleButton("Add/Remove", *add_remove_mode) {
                 editor_flag_mode = .AddRemove;
+                level_flag_mode = .None;
             }
         }
 
@@ -607,33 +914,35 @@ nav_mesh_editor_render_interface :: () {
             ImGui.PushID("level flags");
             defer ImGui.PopID();
 
-            none_mode := flag_mode == .None;
+            none_mode := level_flag_mode == .None;
             if ToggleButton("None", *none_mode) {
-                flag_mode = .None;
+                level_flag_mode = .None;
             }
-            set_mode := flag_mode == .Set;
+            set_mode := level_flag_mode == .Set;
             ImGui.SameLine();
             if ToggleButton("Set", *set_mode) {
-                flag_mode = .Set;
+                level_flag_mode = .Set;
+                editor_flag_mode = .None;
             }
-            add_remove_mode := flag_mode == .AddRemove;
+            add_remove_mode := level_flag_mode == .AddRemove;
             ImGui.SameLine();
             if ToggleButton("Add/Remove", *add_remove_mode) {
-                flag_mode = .AddRemove;
+                level_flag_mode = .AddRemove;
+                editor_flag_mode = .None;
             }
         }
 
-        for i: 0..flag_names.count - 1 {
-            if flag_values[i] == 0 {
+        for i: 0..level_flag_names.count - 1 {
+            if level_flag_values[i] == 0 {
                 continue;
             }
 
-            enabled := !!(current_flags & flag_values[i]);
-            if ImGui.Checkbox(flag_names[i].data, *enabled) {
+            enabled := !!(current_level_flags & level_flag_values[i]);
+            if ImGui.Checkbox(level_flag_names[i].data, *enabled) {
                 if enabled {
-                    current_flags |= flag_values[i];
+                    current_level_flags |= level_flag_values[i];
                 } else {
-                    current_flags &= ~flag_values[i];
+                    current_level_flags &= ~level_flag_values[i];
                 }
             }
         }
@@ -667,23 +976,37 @@ nav_load :: () {
 } @command
 
 nav_load :: (name: string) {
+    print("Reading %\n", name);
     file_string, success := read_entire_file(name, log_errors = false);
     if success {
+        print("Done reading % %\n", name, file_string.count);
         bytes: [] u8;
         bytes.data = file_string.data;
         bytes.count = file_string.count;
 
-        editor_old: NavMeshEditorOld;
+        // {
+        //     NavMeshEditorOld :: struct {
+        //         polygons: [..] NavMeshPolygonOld;
+        //     }
+        //     NavMeshPolygonOld :: struct {
+        //         points: [MAX_VERTS] Vector3;
+        //         count: s32;
+        //         weight: u32 = 1;
+        //         flags: u64;
+        //     }
+        //     editor_old: NavMeshEditorOld;
+        //     serializer_read(bytes, *editor_old);
+        //     for polygon: editor_old.polygons {
+        //         polygon_new: NavMeshPolygon;
+        //         polygon_new.points = polygon.points;
+        //         polygon_new.count = polygon.count;
+        //         polygon_new.weight = polygon.weight;
+        //         array_add(*editor.polygons, polygon_new);
+        //     }
+        // }
 
-        // editor = .{};
-        serializer_read(bytes, *editor_old);
-
-        for polygon: editor_old.polygons {
-            polygon_new: NavMeshPolygonNew;
-            polygon_new.points = polygon.points;
-            polygon_new.count = polygon.count;
-            array_add(*editor.polygons, polygon_new);
-        }
+        editor = .{};
+        serializer_read(bytes, *editor);
 
         nav_mesh_remove_duplicates();
 
@@ -878,7 +1201,7 @@ nav_mesh_split_edge :: (v1: Vector3, v2: Vector3, split: Vector3) -> valid: bool
     invalidated_something := false;
 
     for *polygon: editor.polygons {
-        if it_index == editor.polygons.count - 1 && state == .CreatingPolygon {
+        if it_index == editor.polygons.count - 1 && polygon_state == .CreatingPolygon {
             continue;
         }
 
@@ -961,7 +1284,7 @@ hsv_to_rgb :: (cx: float, cy: float, cz: float) -> (r: float, g: float, b: float
 }
 
 nav_mesh_correct_polygon_point :: (point: Vector3) -> Vector3 {
-    assert(state == .CreatingPolygon, "Not creating polygon.\n");
+    assert(polygon_state == .CreatingPolygon, "Not creating polygon.\n");
 
     corrected_point := point;
 
@@ -1076,7 +1399,7 @@ nav_mesh_get_snap_edge :: () -> Vector3, Vector3, Vector3, bool {
     // TODO better
     for polygon: editor.polygons {
         // don't snap to currently editing polygon
-        if state == .CreatingPolygon && it_index == editor.polygons.count - 1 {
+        if polygon_state == .CreatingPolygon && it_index == editor.polygons.count - 1 {
             continue;
         }
 
@@ -1340,7 +1663,7 @@ get_concave_normal :: () -> Vector3 {
 }
 
 nav_mesh_add_point :: (point: Vector3) {
-    if state != .CreatingPolygon {
+    if polygon_state != .CreatingPolygon {
         return;
     }
 
@@ -1408,21 +1731,22 @@ ToggleButton :: (label: *u8, selected: *bool) -> bool {
     return clicked;
 }
 
-state: EditorState;
-
 mode: EditorMode;
 
+polygon_state: EditorStatePolygons;
+last_polygon_state: EditorStatePolygons;
+
 editor_flag_mode: FlagMode;
-flag_mode: FlagMode;
+level_flag_mode: FlagMode;
 
 editor_flag_values: [] u64;
 editor_flag_names: [] string;
 
-flag_values: [] u64;
-flag_names: [] string;
+level_flag_values: [] u64;
+level_flag_names: [] string;
 
 current_weight: u32;
-current_flags: u64;
+current_level_flags: u64;
 current_editor_flags: u64;
 
 weight_mode: WeightMode;
@@ -1437,7 +1761,7 @@ raw_point: Vector3;
 last_point: Vector3;
 current_point: Vector3;
 
-editor: NavMeshEditorNew;
+editor: NavMeshEditor;
 raycast_callback: #type () -> Vector3;
 console_print_callback: #type (text: string);
 last_mouse_left: bool;
@@ -1455,8 +1779,6 @@ frustum: Frustum;
 
 concave_polygon: bool;
 concave_polygon_points: [..] Vector3;
-
-last_state: EditorState;
 
 #import "KodaJai";
 #import "JaiSerializer";

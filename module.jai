@@ -163,3 +163,5 @@ fastmin :: inline (a: $T, b: T) -> T {
 fastmax :: inline (a: $T, b: T) -> T {
     return a ^ ((a ^ b) & -(cast,no_check(T) (a < b)));
 }
+
+#import "JaiBoundingTree";
