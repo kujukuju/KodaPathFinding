@@ -56,8 +56,11 @@ nav_mesh_editor_toggle :: () {
     if nav_mesh_editor_enabled {
         editor_flag_values, editor_flag_names = get_enum_arrays(NavMeshEditorFlags);
 
-        color_seed = random_get();
-        nav_load();
+        if !editor.polygons {
+            nav_load();
+        }
+    } else {
+        context.nav_mesh_manager.nav_mesh = nav_mesh_editor_get_nav_mesh();
     }
 }
 

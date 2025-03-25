@@ -7,6 +7,7 @@ NavMesh :: struct {
     points: [] [] Vector3;
 
     centers: [] Vector3;
+    normals: [] Vector3;
     flags: [] u64;
     weights: [] u32;
 
@@ -23,6 +24,7 @@ generate_nav_mesh :: (polygons: [] NavMeshPolygon) -> NavMesh {
     nav_mesh.portals = NewArray(polygons.count, [] [2] Vector3);
     nav_mesh.points = NewArray(polygons.count, [] Vector3);
     nav_mesh.centers = NewArray(polygons.count, Vector3);
+    nav_mesh.normals = NewArray(polygons.count, Vector3);
     nav_mesh.flags = NewArray(polygons.count, u64);
     nav_mesh.weights = NewArray(polygons.count, u32);
 
@@ -32,6 +34,14 @@ generate_nav_mesh :: (polygons: [] NavMeshPolygon) -> NavMesh {
             nav_mesh.centers[polygon_index] += polygon.points[i];
         }
         nav_mesh.centers[polygon_index] /= polygon.count;
+    }
+
+    // normals
+    for polygon, polygon_index: polygons {
+        points: [] Vector3;
+        points.data = polygon.points.data;
+        points.count = polygon.count;
+        nav_mesh.normals[polygon_index] = get_normal(points);
     }
 
     // flags
@@ -156,14 +166,19 @@ get_floor_node :: (nav_mesh: *NavMesh, point: Vector3) -> s32, Vector3 {
 
     ray := Ray3.{point, .{0, -1, 0}};
 
+    nearest_ray_node: s32 = -1;
+    nearest_ray_p: Vector3;
+    nearest_ray_dist := FLOAT32_MAX;
+
     nearest_node: s32 = -1;
     nearest_p: Vector3;
     nearest_dist := FLOAT32_MAX;
+
     iter_count := 0;
     while nearest_dist == FLOAT32_MAX && iter_count < 4 {
         aabb: AABB3;
-        aabb.lower = point - .{radius, radius * 4.0, radius};
-        aabb.upper = point + .{radius, radius * 4.0, radius};
+        aabb.lower = point - .{radius, radius * 8.0, radius};
+        aabb.upper = point + .{radius, radius * 8.0, radius};
 
         for node: query(*nav_mesh.node_tree, aabb) {
             points := nav_mesh.points[node];
@@ -171,12 +186,12 @@ get_floor_node :: (nav_mesh: *NavMesh, point: Vector3) -> s32, Vector3 {
             node_plane_point, _, node_plane_hit := intersection_simple(node_plane, ray);
             if node_plane_hit && intersects(points, node_plane.normal, node_plane_point) {
                 node_plane_dist := distance(node_plane_point, point);
-                if node_plane_dist < nearest_dist {
-                    nearest_node = node;
-                    nearest_p = node_plane_point;
-                    nearest_dist = node_plane_dist;
+                if node_plane_dist < nearest_ray_dist {
+                    nearest_ray_node = node;
+                    nearest_ray_p = node_plane_point;
+                    nearest_ray_dist = node_plane_dist;
                 }
-            } else {
+            } else if nearest_ray_dist == FLOAT32_MAX {
                 for i: 0..points.count - 1 {
                     curr := points[i];
                     next := points[(i + 1) % points.count];
@@ -195,6 +210,11 @@ get_floor_node :: (nav_mesh: *NavMesh, point: Vector3) -> s32, Vector3 {
 
         radius *= 2;
         iter_count += 1;
+    }
+
+    // we prioritize downward intersections first
+    if nearest_ray_node >= 0 {
+        return nearest_ray_node, nearest_ray_p;
     }
 
     return nearest_node, nearest_p;
