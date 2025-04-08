@@ -825,6 +825,15 @@ nav_mesh_editor_draw :: (alpha: float) #expand {
 
     draw_sphere(raw_point, .{0.1, 0.1, 0.1}, color = .{0.5, 0.8, 0.82, alpha});
     draw_sphere(current_point, .{0.1, 0.1, 0.1}, color = .{0.5, 0.52, 0.8, alpha});
+
+    if current_point != raw_point || dragging {
+        major :: 0.5;
+        minor :: 0.01;
+        for i: 0..10 {
+            height := i / 10.0 * 1.5;
+            draw_torus(current_point + .{0, height, 0}, .{0, 1, 0}, major - minor, minor, color = .{0.75, 0.75, 0.75, 1});
+        }
+    }
 }
 
 nav_mesh_editor_render_interface :: () {
