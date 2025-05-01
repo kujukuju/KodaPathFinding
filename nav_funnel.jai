@@ -113,7 +113,7 @@ funnel_path :: (nav_mesh: NavMesh, start: Vector3, end: Vector3, path: [] s32, $
     return anchors;
 }
 
-#scope_file
+#scope_module
 
 get_portal_intersection :: (portal: [2] Vector3, line: Line3) -> Vector3 {
     l0 := portal[0];
@@ -129,6 +129,23 @@ get_portal_intersection :: (portal: [2] Vector3, line: Line3) -> Vector3 {
 
     return l0 + t * ldir;
 }
+
+get_portal_intersection :: (portal: [2] Vector3, ray: Ray3) -> Vector3 {
+    l0 := portal[0];
+    ldir := portal[1] - portal[0];
+    m0 := Vector3.{ray.p.x, 0, ray.p.z};
+    mdir := Vector3.{ray.dir.x, 0, ray.dir.z};
+
+    denom := ldir.x * mdir.z - ldir.z * mdir.x;
+    if denom == 0 {
+        return portal[0] / 2.0 + portal[1] / 2.0;
+    }
+    t := ((m0.x - l0.x) * mdir.z - (m0.z - l0.z) * mdir.x) / denom;
+
+    return l0 + t * ldir;
+}
+
+#scope_file
 
 get_portal :: (nav_mesh: NavMesh, node: s32, next_node: s32) -> [2] Vector3 {
     for connected_node: nav_mesh.nodes[node] {

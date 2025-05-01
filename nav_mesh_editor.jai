@@ -37,6 +37,11 @@ NavMeshPolygon :: struct {
     level_flags: u64;
 }
 
+NavMeshPolygonMode :: enum {
+    Physics :: 0;
+    Distance :: 1;
+}
+
 NavMeshEditorFlags :: enum_flags {
     None :: 0;
     OneWay :: 1;
@@ -826,7 +831,7 @@ nav_mesh_editor_draw :: (alpha: float) #expand {
     draw_sphere(raw_point, .{0.1, 0.1, 0.1}, color = .{0.5, 0.8, 0.82, alpha});
     draw_sphere(current_point, .{0.1, 0.1, 0.1}, color = .{0.5, 0.52, 0.8, alpha});
 
-    if current_point != raw_point || dragging {
+    if current_point != raw_point || dragging || polygon_state == .CreatingPolygon {
         major :: 0.5;
         minor :: 0.01;
         for i: 0..10 {
@@ -862,7 +867,24 @@ nav_mesh_editor_render_interface :: () {
 
     ImGui.Separator();
 
-    if mode == .Weights {
+    if mode == .Polygons {
+        ImGui.Text("Polygons Mode");
+
+        {
+            ImGui.PushID("polygon mode");
+            defer ImGui.PopID();
+
+            physics_mode := polygon_mode == .Physics;
+            if ToggleButton("Physics", *physics_mode) {
+                polygon_mode = .Physics;
+            }
+            distance_mode := polygon_mode == .Distance;
+            ImGui.SameLine();
+            if ToggleButton("Distance", *distance_mode) {
+                polygon_mode = .Distance;
+            }
+        }
+    } else if mode == .Weights {
         all_weights := weight_mode == .AllWeights;
         if ToggleButton("All Weights", *all_weights) {
             weight_mode = .AllWeights;
@@ -966,8 +988,27 @@ nav_mesh_editor_get_nav_mesh :: () -> NavMesh {
     return generate_nav_mesh(editor.polygons);
 }
 
+nav_mesh_editor_load_editor :: (name: string) -> NavMeshEditor, bool {
+    file_string, success := read_entire_file(name);
+    defer free(file_string);
+
+    file_bytes: [] u8;
+    file_bytes.data = file_string.data;
+    file_bytes.count = file_string.count;
+
+    if success {
+        mesh: NavMeshEditor;
+        serializer_read(file_bytes, *mesh);
+        nav_mesh_remove_duplicates(*mesh);
+
+        return mesh, true;
+    }
+
+    return .{}, false;
+}
+
 nav_save :: () {
-    nav_save(to_lower_copy(tprint("raw/nav/%.nav", context.selected_level),, temp));
+    nav_save(to_lower_copy(tprint("assets_raw/nav/%.nav", context.selected_level),, temp));
 } @command
 
 nav_save :: (name: string) {
@@ -977,55 +1018,22 @@ nav_save :: (name: string) {
 
     success := write_entire_file(name, bytes.data, bytes.count);
     if success {
-        console_print_callback("Saved nav mesh.");
+        if console_print_callback then console_print_callback("Saved nav mesh.");
     } else {
-        console_print_callback("Could not save nav mesh.");
+        if console_print_callback then console_print_callback("Could not save nav mesh.");
     }
 } @command
 
 nav_load :: () {
-    nav_load(to_lower_copy(tprint("raw/nav/%.nav", context.selected_level),, temp));
+    nav_load(to_lower_copy(tprint("assets_raw/nav/%.nav", context.selected_level),, temp));
 } @command
 
 nav_load :: (name: string) {
-    print("Reading %\n", name);
-    file_string, success := read_entire_file(name, log_errors = false);
-    if success {
-        print("Done reading % %\n", name, file_string.count);
-        bytes: [] u8;
-        bytes.data = file_string.data;
-        bytes.count = file_string.count;
+    loaded: bool;
+    editor, loaded = nav_mesh_editor_load_editor(name);
 
-        // {
-        //     NavMeshEditorOld :: struct {
-        //         polygons: [..] NavMeshPolygonOld;
-        //     }
-        //     NavMeshPolygonOld :: struct {
-        //         points: [MAX_VERTS] Vector3;
-        //         count: s32;
-        //         weight: u32 = 1;
-        //         flags: u64;
-        //     }
-        //     editor_old: NavMeshEditorOld;
-        //     serializer_read(bytes, *editor_old);
-        //     for polygon: editor_old.polygons {
-        //         polygon_new: NavMeshPolygon;
-        //         polygon_new.points = polygon.points;
-        //         polygon_new.count = polygon.count;
-        //         polygon_new.weight = polygon.weight;
-        //         array_add(*editor.polygons, polygon_new);
-        //     }
-        // }
-
-        editor = .{};
-        serializer_read(bytes, *editor);
-
-        nav_mesh_remove_duplicates();
-
-        console_print_callback("Loaded nav mesh.");
-    } else {
-        console_print_callback("Could not load nav mesh.");
-    }
+    if loaded && console_print_callback then console_print_callback("Loaded nav mesh.");
+    if !loaded && console_print_callback then console_print_callback("Could not load nav mesh.");
 } @command
 
 #scope_file
@@ -1500,24 +1508,28 @@ nav_mesh_get_snap_distance :: (point: Vector3) -> float {
 }
 
 nav_mesh_remove_duplicates :: () {
+    nav_mesh_remove_duplicates(*editor);
+}
+
+nav_mesh_remove_duplicates :: (mesh: *NavMeshEditor) {
     found_duplicate := true;
     while duplicate_loop := found_duplicate {
         found_duplicate = false;
 
-        for a: 0..editor.polygons.count - 1 {
-            for b: 0..editor.polygons.count - 1 {
-                if a == b || editor.polygons[a].count < editor.polygons[b].count {
+        for a: 0..mesh.polygons.count - 1 {
+            for b: 0..mesh.polygons.count - 1 {
+                if a == b || mesh.polygons[a].count < mesh.polygons[b].count {
                     // we don't want to match with ourselves or remove a polygon with more vertices than us
                     continue;
                 }
 
                 is_duplicate := true;
 
-                for bi: 0..editor.polygons[b].count - 1 {
-                    point_b := editor.polygons[b].points[bi];
+                for bi: 0..mesh.polygons[b].count - 1 {
+                    point_b := mesh.polygons[b].points[bi];
 
-                    for ai: 0..editor.polygons[a].count - 1 {
-                        point_a := editor.polygons[a].points[ai];
+                    for ai: 0..mesh.polygons[a].count - 1 {
+                        point_a := mesh.polygons[a].points[ai];
 
                         if point_a == point_b {
                             continue bi;
@@ -1530,7 +1542,7 @@ nav_mesh_remove_duplicates :: () {
 
                 if is_duplicate {
                     // if we get to this point then b is a duplicate of a
-                    array_ordered_remove_by_index(*editor.polygons, b);
+                    array_ordered_remove_by_index(*mesh.polygons, b);
                     found_duplicate = true;
                     continue duplicate_loop;
                 }
@@ -1694,7 +1706,12 @@ nav_mesh_add_point :: (point: Vector3) {
 }
 
 nav_mesh_get_point :: () -> Vector3 {
-    point := raycast_callback();
+    point: Vector3;
+    if polygon_mode == .Physics {
+        point = raycast_callback();
+    } else {
+        point = camera.position + get_forward_vector(camera) * 4;
+    }
 
     return point;
 }
@@ -1748,6 +1765,7 @@ mode: EditorMode;
 polygon_state: EditorStatePolygons;
 last_polygon_state: EditorStatePolygons;
 
+polygon_mode: NavMeshPolygonMode;
 editor_flag_mode: FlagMode;
 level_flag_mode: FlagMode;
 
